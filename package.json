@@ -1,0 +1,20 @@
+{
+  "name": "youngs-plan",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "predev": "node scripts/prepare-dev.mjs",
+    "dev": "concurrently -k \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "db:create": "node scripts/create-db.mjs",
+    "db:schema": "node scripts/apply-schema.mjs",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "test": "npm run test -w backend",
+    "lint": "npm run lint -w backend && npm run lint -w frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

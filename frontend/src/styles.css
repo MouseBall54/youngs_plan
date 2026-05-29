@@ -1,0 +1,1127 @@
+:root {
+  color: #172026;
+  background: #eef1f4;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+.appShell {
+  width: min(100%, 820px);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 18px 14px 92px;
+}
+
+.appHeader,
+.controlBar,
+.sectionHeader,
+.assetMain,
+.accountItem,
+.rowActions,
+.breakdownTop,
+.breakdownBottom,
+.chartLegend,
+.bottomNav {
+  display: flex;
+  align-items: center;
+}
+
+.appHeader {
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.eyebrow {
+  margin: 0 0 3px;
+  color: #697783;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.72rem;
+  line-height: 1.12;
+}
+
+h2 {
+  font-size: 1rem;
+}
+
+.iconButton,
+.rowActions button {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  place-items: center;
+  border: 1px solid #d9e0e6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #274257;
+}
+
+.headerRefreshButton {
+  display: inline-flex;
+  width: auto;
+  min-width: 86px;
+  padding: 0 12px;
+  gap: 7px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.controlBar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 -2px 12px;
+  padding: 8px 2px;
+  background: rgba(238, 241, 244, 0.92);
+  backdrop-filter: blur(12px);
+}
+
+.controlBar label,
+.controlBar button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.controlBar label {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid #d9e0e6;
+  padding: 0 10px;
+  background: #ffffff;
+  color: #697783;
+}
+
+.controlBar input {
+  min-height: 38px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.controlBar button,
+button[type="submit"] {
+  justify-content: center;
+  padding: 0 14px;
+  background: #17456b;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 11px 12px;
+  border-radius: 8px;
+  background: #fff4d8;
+  color: #724d00;
+  font-size: 0.92rem;
+}
+
+.notice span {
+  min-width: 0;
+}
+
+.notice button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+  color: inherit;
+}
+
+.notice.success {
+  background: #e3f5ec;
+  color: #126146;
+}
+
+.heroCard {
+  display: flex;
+  min-height: 148px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 8px;
+  background: #102331;
+  color: #ffffff;
+}
+
+.heroCard span {
+  color: #b7c7d4;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.heroCard strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 2rem;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.liquidBadge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #eaf2f7;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.metric {
+  min-width: 0;
+  min-height: 106px;
+  padding: 12px;
+  border: 1px solid #dce3e8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.metric span {
+  display: inline-flex;
+  color: #28715b;
+}
+
+.metric svg {
+  width: 19px;
+  height: 19px;
+}
+
+.metric p {
+  margin-top: 13px;
+  color: #697783;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.metric strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 1.02rem;
+  overflow-wrap: anywhere;
+}
+
+.panel {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid #dce3e8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.sectionHeader {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sectionControls {
+  display: grid;
+  max-width: 100%;
+  gap: 6px;
+  justify-items: end;
+}
+
+.sectionHeader span,
+.emptyText,
+.accountItem span,
+.assetMeta,
+.assetItem span {
+  color: #697783;
+  font-size: 0.84rem;
+}
+
+.textButton {
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #edf4f1;
+  color: #1f604d;
+  font-size: 0.86rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.segmented {
+  display: flex;
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: 8px;
+  padding: 3px;
+  background: #edf1f4;
+}
+
+.segmented button {
+  min-height: 30px;
+  border-radius: 7px;
+  padding: 0 8px;
+  background: transparent;
+  color: #697783;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.segmented button.active {
+  background: #ffffff;
+  color: #172026;
+  box-shadow: 0 1px 3px rgba(28, 42, 52, 0.12);
+}
+
+.chartWrap {
+  min-height: 206px;
+  padding-top: 2px;
+}
+
+.chartWrap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.chartGrid line {
+  stroke: #d9e2e8;
+  stroke-width: 0.7;
+  stroke-dasharray: 2 6;
+  vector-effect: non-scaling-stroke;
+}
+
+.chartWrap polyline {
+  fill: none;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.totalArea {
+  fill: url("#totalAreaGradient");
+}
+
+.liquidArea {
+  fill: url("#liquidAreaGradient");
+}
+
+.chartMarker {
+  fill: #ffffff;
+  stroke: #28715b;
+  stroke-width: 1.3;
+  opacity: 0.72;
+  vector-effect: non-scaling-stroke;
+}
+
+.chartTooltip line {
+  stroke: rgba(23, 32, 38, 0.42);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+}
+
+.activeTotalPoint,
+.activeLiquidPoint {
+  fill: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.activeTotalPoint {
+  stroke: #17456b;
+}
+
+.activeLiquidPoint {
+  stroke: #28715b;
+}
+
+.chartTooltip rect {
+  fill: rgba(17, 29, 38, 0.94);
+  filter: drop-shadow(0 8px 16px rgba(23, 32, 38, 0.16));
+}
+
+.chartTooltip text {
+  fill: #ffffff;
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.chartTooltip .tooltipDate {
+  fill: #d9e8f3;
+}
+
+.chartAxis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: -2px 2px 8px;
+  color: #7b8791;
+  font-size: 0.64rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.chartAxis .start {
+  grid-column: 1;
+  text-align: left;
+}
+
+.chartAxis .middle {
+  grid-column: 2;
+  text-align: center;
+}
+
+.chartAxis .end {
+  grid-column: 3;
+  text-align: right;
+}
+
+.totalLine {
+  stroke: #17456b;
+}
+
+.liquidLine {
+  stroke: #28715b;
+}
+
+.chartLegend {
+  justify-content: space-between;
+  gap: 10px;
+  color: #50606b;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.chartLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.chartLegend i {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.legendTotal {
+  background: #17456b;
+}
+
+.legendLiquid {
+  background: #28715b;
+}
+
+.releaseTable {
+  display: grid;
+  gap: 8px;
+}
+
+.releaseHeader,
+.releaseRow {
+  display: grid;
+  grid-template-columns: 0.9fr 1.3fr 1.1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.releaseHeader {
+  padding: 0 2px 6px;
+  border-bottom: 1px solid #edf1f4;
+  color: #697783;
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.releaseRow {
+  border: 1px solid #dce3e8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.releaseRow strong,
+.releaseRow b,
+.releaseAsset {
+  display: block;
+}
+
+.releaseRow span {
+  display: block;
+  margin-top: 3px;
+  color: #697783;
+  font-size: 0.8rem;
+}
+
+.releaseRow .releaseAsset {
+  color: #172026;
+  font-weight: 800;
+}
+
+.pieBlock {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 14px;
+  align-items: center;
+}
+
+.pieChart {
+  width: 150px;
+  height: 150px;
+}
+
+.pieChart circle {
+  fill: none;
+  stroke-width: 20;
+  transform: rotate(-90deg);
+  transform-origin: 60px 60px;
+}
+
+.pieChart .pieBase {
+  stroke: #edf1f4;
+}
+
+.pieChart text {
+  fill: #172026;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.pieChart text:first-of-type {
+  fill: #697783;
+  font-size: 0.62rem;
+}
+
+.pieLegend {
+  display: grid;
+  gap: 9px;
+}
+
+.pieLegend div,
+.pieLegend span {
+  display: flex;
+  align-items: center;
+}
+
+.pieLegend div {
+  justify-content: space-between;
+  gap: 12px;
+  color: #172026;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.pieLegend span {
+  min-width: 0;
+  gap: 8px;
+}
+
+.pieLegend i {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 999px;
+}
+
+.breakdownList,
+.assetList,
+.accountList,
+.assetForm,
+.compactForm {
+  display: grid;
+  gap: 9px;
+}
+
+.assetListFilters {
+  display: grid;
+  grid-template-columns: 1.4fr minmax(120px, 0.9fr) minmax(110px, 0.8fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.assetSearchBox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.assetSearchBox button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #17456b;
+  color: #ffffff;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.breakdownRow {
+  padding: 9px 0;
+  border-bottom: 1px solid #edf1f4;
+}
+
+.breakdownRow:last-child {
+  border-bottom: 0;
+}
+
+.breakdownTop,
+.breakdownBottom {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.breakdownTop strong {
+  font-size: 0.94rem;
+}
+
+.breakdownTop span,
+.breakdownBottom span {
+  color: #697783;
+  font-size: 0.86rem;
+}
+
+.barTrack {
+  height: 7px;
+  margin: 8px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1f4;
+}
+
+.barTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #28715b;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #d3dce3;
+  border-radius: 8px;
+  padding: 10px 11px;
+  background: #fbfcfd;
+  color: #172026;
+}
+
+textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.assetForm {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.compactForm {
+  grid-template-columns: 1fr 1fr auto;
+}
+
+.assetForm textarea,
+.assetForm button,
+.dateInput,
+.toggleRow,
+.searchField,
+.tickerField,
+.tickerResults,
+.priceQuantityGrid,
+.maturityPanel,
+.transactionMode,
+.tradePreview,
+.assetPickerSearch {
+  grid-column: 1 / -1;
+}
+
+.transactionMode .segmented {
+  width: 100%;
+}
+
+.transactionMode .segmented button {
+  flex: 1;
+}
+
+.tradePreview {
+  display: grid;
+  gap: 5px;
+  padding: 10px 11px;
+  border: 1px solid #dce3e8;
+  border-radius: 8px;
+  background: #fbfcfd;
+  color: #50606b;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.tradePreview b {
+  color: #172026;
+}
+
+.priceQuantityGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.maturityPanel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dce3e8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.priceQuantityGrid input {
+  min-width: 0;
+}
+
+.tickerField {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.searchField {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.searchField input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.searchField button {
+  width: 88px;
+  flex: 0 0 88px;
+}
+
+.searchField button,
+.tickerField button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #edf4f1;
+  color: #1f604d;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.tickerResults {
+  display: grid;
+  gap: 7px;
+}
+
+.tickerResults button {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #dce3e8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfd;
+  color: #172026;
+  text-align: left;
+}
+
+.tickerResults span {
+  color: #697783;
+  font-size: 0.82rem;
+}
+
+.fxGrid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fxGrid label {
+  display: grid;
+  gap: 6px;
+  color: #50606b;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.fxGrid span {
+  grid-column: 1 / -1;
+  color: #697783;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.dateInput {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  color: #50606b;
+  font-size: 0.86rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.dateInput input {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin-left: auto;
+}
+
+.toggleRow {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #d3dce3;
+  border-radius: 8px;
+  padding: 10px 11px;
+  background: #fbfcfd;
+  color: #50606b;
+  font-size: 0.9rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.toggleRow input {
+  width: 42px;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  accent-color: #17456b;
+}
+
+button[type="submit"] {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.assetItem,
+.accountItem {
+  position: relative;
+  gap: 10px;
+  border: 1px solid #dce3e8;
+  border-left: 4px solid #9aa7b2;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.assetItem.liquid {
+  border-left-color: #28715b;
+}
+
+.assetMain,
+.accountItem {
+  justify-content: space-between;
+}
+
+.assetMain {
+  gap: 12px;
+}
+
+.assetMain strong,
+.accountItem strong {
+  display: block;
+  font-size: 0.98rem;
+}
+
+.assetValue {
+  flex: 0 0 auto;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.assetValue b {
+  display: block;
+  font-size: 0.98rem;
+}
+
+.assetMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 8px;
+}
+
+.rowActions {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.assetItem .rowActions {
+  margin-top: 8px;
+}
+
+.aggregateBadge {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #eef5f2;
+  color: #27664f;
+  font-size: 0.82rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.transactionList {
+  display: grid;
+  gap: 8px;
+}
+
+.transactionItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #dce3e8;
+  border-radius: 8px;
+  padding: 10px 11px;
+  background: #fbfcfd;
+}
+
+.transactionItem strong,
+.transactionItem span {
+  display: block;
+}
+
+.transactionItem > div:first-child {
+  min-width: 0;
+}
+
+.transactionItem span {
+  margin-top: 3px;
+  color: #697783;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.transactionItem b {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.transactionItem .rowActions {
+  flex-wrap: nowrap;
+}
+
+.transactionItem .rowActions button {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+}
+
+.gain {
+  color: #697783;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.gain.positive {
+  color: #0f7a58;
+}
+
+.gain.negative,
+.errorText {
+  color: #c24135;
+}
+
+.bottomNav {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  justify-content: center;
+  border-top: 1px solid #dce3e8;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(14px);
+}
+
+.bottomNav button {
+  display: grid;
+  width: min(33.33vw, 150px);
+  min-height: 64px;
+  place-items: center;
+  align-content: center;
+  gap: 3px;
+  background: transparent;
+  color: #697783;
+  font-size: 0.74rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.bottomNav svg {
+  width: 20px;
+  height: 20px;
+}
+
+.bottomNav button.active {
+  color: #17456b;
+}
+
+@media (max-width: 560px) {
+  .appShell {
+    padding-inline: 12px;
+  }
+
+  .heroCard {
+    min-height: 136px;
+    padding: 16px;
+  }
+
+  .heroCard strong {
+    font-size: 1.72rem;
+  }
+
+  .metricGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .metric {
+    min-height: 96px;
+    padding: 10px;
+  }
+
+  .metric strong {
+    font-size: 0.94rem;
+  }
+
+  .sectionHeader {
+    align-items: flex-start;
+  }
+
+  .chartPanel .sectionHeader {
+    display: grid;
+  }
+
+  .sectionControls {
+    justify-items: stretch;
+  }
+
+  .releaseHeader {
+    display: none;
+  }
+
+  .releaseRow {
+    grid-template-columns: 1fr;
+  }
+
+  .assetForm,
+  .compactForm {
+    grid-template-columns: 1fr;
+  }
+
+  .fxGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .assetListFilters {
+    grid-template-columns: 1fr;
+  }
+
+  .pieBlock {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .pieLegend {
+    width: 100%;
+  }
+
+  .assetMain {
+    align-items: flex-start;
+  }
+
+  .transactionItem {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .transactionItem .rowActions {
+    grid-column: 1 / -1;
+  }
+}
