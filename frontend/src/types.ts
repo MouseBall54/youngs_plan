@@ -1,12 +1,17 @@
 export type AssetType = "stock" | "real_estate" | "cash" | "bond" | "dividend";
 export type AssetMarket = "domestic" | "us" | "other";
-export type TransactionType = "buy" | "sell" | "dividend" | "maturity";
+export type TransactionType = "buy" | "sell" | "dividend" | "maturity" | "deposit";
 export type PriceSource = "manual" | "yahoo" | "stooq";
+export type SimulationIncomeType = "monthly" | "one_time";
+export type SimulationAvailability = "immediate" | "unlock_date" | "unavailable";
 
 export type Account = {
   id: string;
   name: string;
   institution: string | null;
+  liquidityRestricted: boolean;
+  liquidityUnlockDate: string | null;
+  liquidityRestrictionReason: string | null;
   createdAt: string;
 };
 
@@ -15,6 +20,9 @@ export type AssetValuation = {
   accountId: string;
   accountName: string;
   institution: string | null;
+  accountLiquidityRestricted: boolean;
+  accountLiquidityUnlockDate: string | null;
+  accountLiquidityRestrictionReason: string | null;
   type: AssetType;
   name: string;
   market: AssetMarket;
@@ -43,6 +51,8 @@ export type AssetValuation = {
   gainKrw: number;
   gainRate: number | null;
   isLiquidByDate: boolean;
+  effectiveLiquidFrom: string;
+  liquidityBlockReason: "liquid" | "asset" | "account";
   lotCount?: number;
   lotIds?: string[];
   firstValuationDate?: string;
@@ -80,6 +90,8 @@ export type Summary = {
   totalIncomeKrw: number;
   liquidValueKrw: number;
   lockedValueKrw: number;
+  accountLockedValueKrw: number;
+  assetLockedValueKrw: number;
   liquidRatio: number;
   byType: Record<string, number>;
   byAccount: Record<string, number>;
@@ -147,6 +159,25 @@ export type PriceRefreshResponse = {
   }>;
 };
 
+export type PriceHistoryRefreshResponse = {
+  updatedAt: string;
+  startDate: string;
+  endDate: string;
+  results: Array<{
+    ticker: string | null;
+    market: AssetMarket;
+    ok: boolean;
+    count: number;
+    source?: PriceSource;
+    message?: string;
+  }>;
+  fxResult: {
+    ok: boolean;
+    count: number;
+    message?: string;
+  } | null;
+};
+
 export type TickerSearchResult = {
   symbol: string;
   name: string;
@@ -163,3 +194,22 @@ export type FxRateResponse = {
   rate: number;
   date: string;
 };
+
+export type SimulationIncome = {
+  id: string;
+  accountId: string | null;
+  accountName: string | null;
+  type: SimulationIncomeType;
+  name: string;
+  amountKrw: number;
+  startDate: string;
+  endDate: string | null;
+  repeatsIndefinitely: boolean;
+  availability: SimulationAvailability;
+  unlockDate: string | null;
+  note: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type SimulationIncomeInput = Omit<SimulationIncome, "id" | "accountName" | "createdAt" | "updatedAt">;

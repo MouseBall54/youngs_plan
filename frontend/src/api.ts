@@ -5,7 +5,10 @@ import type {
   AssetTransaction,
   FxRateResponse,
   HistoryResponse,
+  PriceHistoryRefreshResponse,
   PriceRefreshResponse,
+  SimulationIncome,
+  SimulationIncomeInput,
   Summary,
   TickerSearchResponse
 } from "./types";
@@ -20,14 +23,26 @@ export async function fetchAccounts(): Promise<Account[]> {
   return request("/api/accounts");
 }
 
-export async function createAccount(input: { name: string; institution?: string }): Promise<Account> {
+export async function createAccount(input: {
+  name: string;
+  institution?: string;
+  liquidityRestricted?: boolean;
+  liquidityUnlockDate?: string | null;
+  liquidityRestrictionReason?: string | null;
+}): Promise<Account> {
   return request("/api/accounts", {
     method: "POST",
     body: JSON.stringify(input)
   });
 }
 
-export async function updateAccount(id: string, input: { name: string; institution?: string }): Promise<Account> {
+export async function updateAccount(id: string, input: {
+  name: string;
+  institution?: string;
+  liquidityRestricted?: boolean;
+  liquidityUnlockDate?: string | null;
+  liquidityRestrictionReason?: string | null;
+}): Promise<Account> {
   return request(`/api/accounts/${encodeURIComponent(id)}`, {
     method: "PUT",
     body: JSON.stringify(input)
@@ -96,9 +111,40 @@ export async function deleteTransaction(id: string): Promise<void> {
   });
 }
 
+export async function fetchSimulationIncomes(): Promise<SimulationIncome[]> {
+  return request("/api/simulation/incomes");
+}
+
+export async function createSimulationIncome(input: SimulationIncomeInput): Promise<SimulationIncome> {
+  return request("/api/simulation/incomes", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function updateSimulationIncome(id: string, input: SimulationIncomeInput): Promise<SimulationIncome> {
+  return request(`/api/simulation/incomes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function deleteSimulationIncome(id: string): Promise<void> {
+  await request(`/api/simulation/incomes/${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+}
+
 export async function refreshPrices(): Promise<PriceRefreshResponse> {
   return request("/api/prices/refresh", {
     method: "POST"
+  });
+}
+
+export async function refreshPriceHistory(startDate: string, endDate: string): Promise<PriceHistoryRefreshResponse> {
+  return request("/api/prices/history/refresh", {
+    method: "POST",
+    body: JSON.stringify({ startDate, endDate })
   });
 }
 
