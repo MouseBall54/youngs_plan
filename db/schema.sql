@@ -2,8 +2,16 @@ CREATE TABLE IF NOT EXISTS asset_accounts (
   id text PRIMARY KEY,
   name text NOT NULL,
   institution text,
+  liquidity_restricted boolean NOT NULL DEFAULT false,
+  liquidity_unlock_date date,
+  liquidity_restriction_reason text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE asset_accounts
+  ADD COLUMN IF NOT EXISTS liquidity_restricted boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS liquidity_unlock_date date,
+  ADD COLUMN IF NOT EXISTS liquidity_restriction_reason text;
 
 CREATE TABLE IF NOT EXISTS asset_items (
   id text PRIMARY KEY,
@@ -97,12 +105,62 @@ CREATE INDEX IF NOT EXISTS asset_items_ticker_idx ON asset_items(ticker);
 CREATE INDEX IF NOT EXISTS asset_items_maturity_date_idx ON asset_items(maturity_date);
 CREATE INDEX IF NOT EXISTS asset_value_history_valuation_date_idx ON asset_value_history(valuation_date);
 
+CREATE TABLE IF NOT EXISTS asset_price_history (
+  market text NOT NULL,
+  ticker text NOT NULL,
+  price_date date NOT NULL,
+  close_price numeric NOT NULL,
+  currency text NOT NULL,
+  source text NOT NULL DEFAULT 'manual',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (market, ticker, price_date)
+);
+
+CREATE INDEX IF NOT EXISTS asset_price_history_price_date_idx ON asset_price_history(price_date);
+
+CREATE TABLE IF NOT EXISTS fx_rate_history (
+  base_currency text NOT NULL,
+  quote_currency text NOT NULL,
+  rate_date date NOT NULL,
+  rate numeric NOT NULL,
+  source text NOT NULL DEFAULT 'manual',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (base_currency, quote_currency, rate_date)
+);
+
+CREATE INDEX IF NOT EXISTS fx_rate_history_rate_date_idx ON fx_rate_history(rate_date);
+
+CREATE TABLE IF NOT EXISTS simulation_incomes (
+  id text PRIMARY KEY,
+  account_id text REFERENCES asset_accounts(id) ON DELETE SET NULL,
+  type text NOT NULL CHECK (type IN ('monthly', 'one_time')),
+  name text NOT NULL,
+  amount_krw numeric NOT NULL CHECK (amount_krw > 0),
+  start_date date NOT NULL,
+  end_date date,
+  repeats_indefinitely boolean NOT NULL DEFAULT false,
+  availability text NOT NULL CHECK (availability IN ('immediate', 'unlock_date', 'unavailable')),
+  unlock_date date,
+  note text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE simulation_incomes
+  ADD COLUMN IF NOT EXISTS account_id text REFERENCES asset_accounts(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS simulation_incomes_start_date_idx ON simulation_incomes(start_date);
+CREATE INDEX IF NOT EXISTS simulation_incomes_type_idx ON simulation_incomes(type);
+CREATE INDEX IF NOT EXISTS simulation_incomes_account_id_idx ON simulation_incomes(account_id);
+
 CREATE TABLE IF NOT EXISTS asset_transactions (
   id text PRIMARY KEY,
   asset_id text REFERENCES asset_items(id) ON DELETE SET NULL,
   position_key text,
   account_id text NOT NULL REFERENCES asset_accounts(id) ON DELETE CASCADE,
-  transaction_type text NOT NULL CHECK (transaction_type IN ('buy', 'sell', 'dividend', 'maturity')),
+  transaction_type text NOT NULL CHECK (transaction_type IN ('buy', 'sell', 'dividend', 'maturity', 'deposit')),
   transaction_date date NOT NULL,
   quantity numeric,
   price numeric,
@@ -120,7 +178,7 @@ ALTER TABLE asset_transactions
 
 ALTER TABLE asset_transactions
   DROP CONSTRAINT IF EXISTS asset_transactions_transaction_type_check,
-  ADD CONSTRAINT asset_transactions_transaction_type_check CHECK (transaction_type IN ('buy', 'sell', 'dividend', 'maturity'));
+  ADD CONSTRAINT asset_transactions_transaction_type_check CHECK (transaction_type IN ('buy', 'sell', 'dividend', 'maturity', 'deposit'));
 
 UPDATE asset_transactions t
 SET position_key =

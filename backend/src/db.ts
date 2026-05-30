@@ -3,12 +3,19 @@ import pg from "pg";
 import { randomUUID } from "node:crypto";
 import type {
   Account,
+  AssetMarket,
+  AssetPriceHistory,
   AssetPosition,
+  AssetQuantityHistory,
   AssetTransaction,
   AssetValuation,
   AssetWithAccount,
+  FxRateHistory,
   HistoryPoint,
   PriceSource,
+  SimulationAvailability,
+  SimulationIncome,
+  SimulationIncomeType,
   TransactionType
 } from "./types.js";
 import { estimateAssetCostKrw, estimateAssetValueKrw, valueAssetsForDate } from "./valuation.js";
@@ -19,7 +26,15 @@ export const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 
-const accountColumns = "id, name, institution, created_at AS \"createdAt\"";
+const accountColumns = `
+  id,
+  name,
+  institution,
+  liquidity_restricted AS "liquidityRestricted",
+  liquidity_unlock_date::text AS "liquidityUnlockDate",
+  liquidity_restriction_reason AS "liquidityRestrictionReason",
+  created_at AS "createdAt"
+`;
 const assetColumns = `
   a.id,
   a.account_id AS "accountId",
@@ -47,7 +62,10 @@ const assetColumns = `
   a.notes,
   a.created_at AS "createdAt",
   ac.name AS "accountName",
-  ac.institution
+  ac.institution,
+  ac.liquidity_restricted AS "accountLiquidityRestricted",
+  ac.liquidity_unlock_date::text AS "accountLiquidityUnlockDate",
+  ac.liquidity_restriction_reason AS "accountLiquidityRestrictionReason"
 `;
 const transactionColumns = `
   t.id,
@@ -70,33 +88,98 @@ const transactionColumns = `
   ai.name AS "assetName",
   ai.ticker
 `;
+const assetPriceHistoryColumns = `
+  market,
+  ticker,
+  price_date::text AS "priceDate",
+  close_price::float AS "closePrice",
+  currency,
+  source,
+  created_at AS "createdAt",
+  updated_at AS "updatedAt"
+`;
+const fxRateHistoryColumns = `
+  base_currency AS "baseCurrency",
+  quote_currency AS "quoteCurrency",
+  rate_date::text AS "rateDate",
+  rate::float,
+  source,
+  created_at AS "createdAt",
+  updated_at AS "updatedAt"
+`;
+const simulationIncomeColumns = `
+  si.id,
+  si.account_id AS "accountId",
+  ac.name AS "accountName",
+  si.type,
+  si.name,
+  si.amount_krw::float AS "amountKrw",
+  si.start_date::text AS "startDate",
+  si.end_date::text AS "endDate",
+  si.repeats_indefinitely AS "repeatsIndefinitely",
+  si.availability,
+  si.unlock_date::text AS "unlockDate",
+  si.note,
+  si.created_at AS "createdAt",
+  si.updated_at AS "updatedAt"
+`;
 
 export async function listAccounts(): Promise<Account[]> {
   const result = await pool.query<Account>(`SELECT ${accountColumns} FROM asset_accounts ORDER BY created_at DESC`);
   return result.rows;
 }
 
-export async function createAccount(input: { name: string; institution?: string | null }): Promise<Account> {
+export async function createAccount(input: {
+  name: string;
+  institution?: string | null;
+  liquidityRestricted?: boolean;
+  liquidityUnlockDate?: string | null;
+  liquidityRestrictionReason?: string | null;
+}): Promise<Account> {
   const id = randomUUID();
   const result = await pool.query<Account>(
-    `INSERT INTO asset_accounts (id, name, institution)
-     VALUES ($1, $2, $3)
+    `INSERT INTO asset_accounts (id, name, institution, liquidity_restricted, liquidity_unlock_date, liquidity_restriction_reason)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING ${accountColumns}`,
-    [id, input.name, input.institution ?? null]
+    [
+      id,
+      input.name,
+      input.institution ?? null,
+      input.liquidityRestricted ?? false,
+      input.liquidityRestricted ? input.liquidityUnlockDate ?? null : null,
+      input.liquidityRestricted ? input.liquidityRestrictionReason ?? null : null
+    ]
   );
   return result.rows[0];
 }
 
 export async function updateAccount(
   id: string,
-  input: { name: string; institution?: string | null }
+  input: {
+    name: string;
+    institution?: string | null;
+    liquidityRestricted?: boolean;
+    liquidityUnlockDate?: string | null;
+    liquidityRestrictionReason?: string | null;
+  }
 ): Promise<Account | null> {
   const result = await pool.query<Account>(
     `UPDATE asset_accounts
-     SET name = $2, institution = $3
+     SET name = $2,
+         institution = $3,
+         liquidity_restricted = $4,
+         liquidity_unlock_date = $5,
+         liquidity_restriction_reason = $6
      WHERE id = $1
      RETURNING ${accountColumns}`,
-    [id, input.name, input.institution ?? null]
+    [
+      id,
+      input.name,
+      input.institution ?? null,
+      input.liquidityRestricted ?? false,
+      input.liquidityRestricted ? input.liquidityUnlockDate ?? null : null,
+      input.liquidityRestricted ? input.liquidityRestrictionReason ?? null : null
+    ]
   );
   return result.rows[0] ?? null;
 }
@@ -116,6 +199,18 @@ export async function listAssets(): Promise<AssetWithAccount[]> {
        OR (a.quantity IS NULL AND COALESCE(a.current_value, 0) > 0)
      )
      ORDER BY a.created_at DESC`
+  );
+  return result.rows;
+}
+
+export async function listAssetsForHistory(endDate: string): Promise<AssetWithAccount[]> {
+  const result = await pool.query<AssetWithAccount>(
+    `SELECT ${assetColumns}
+     FROM asset_items a
+     JOIN asset_accounts ac ON ac.id = a.account_id
+     WHERE a.valuation_date <= $1
+     ORDER BY a.valuation_date ASC, a.created_at ASC`,
+    [endDate]
   );
   return result.rows;
 }
@@ -196,7 +291,10 @@ export async function createAsset(input: {
      SELECT
        i.*,
        ac.name AS "accountName",
-       ac.institution
+       ac.institution,
+       ac.liquidity_restricted AS "accountLiquidityRestricted",
+       ac.liquidity_unlock_date::text AS "accountLiquidityUnlockDate",
+       ac.liquidity_restriction_reason AS "accountLiquidityRestrictionReason"
      FROM inserted i
      JOIN asset_accounts ac ON ac.id = i."accountId"`,
     [
@@ -269,7 +367,10 @@ async function createAssetWithClient(
      SELECT
        i.*,
        ac.name AS "accountName",
-       ac.institution
+       ac.institution,
+       ac.liquidity_restricted AS "accountLiquidityRestricted",
+       ac.liquidity_unlock_date::text AS "accountLiquidityUnlockDate",
+       ac.liquidity_restriction_reason AS "accountLiquidityRestrictionReason"
      FROM inserted i
      JOIN asset_accounts ac ON ac.id = i."accountId"`,
     [
@@ -376,7 +477,10 @@ export async function updateAsset(input: {
      SELECT
        u.*,
        ac.name AS "accountName",
-       ac.institution
+       ac.institution,
+       ac.liquidity_restricted AS "accountLiquidityRestricted",
+       ac.liquidity_unlock_date::text AS "accountLiquidityUnlockDate",
+       ac.liquidity_restriction_reason AS "accountLiquidityRestrictionReason"
      FROM updated u
      JOIN asset_accounts ac ON ac.id = u."accountId"`,
     [
@@ -429,6 +533,258 @@ export async function listTickerAssets(): Promise<AssetWithAccount[]> {
   return result.rows;
 }
 
+export async function listTickerAssetsForHistory(): Promise<AssetWithAccount[]> {
+  const result = await pool.query<AssetWithAccount>(
+    `SELECT ${assetColumns}
+     FROM asset_items a
+     JOIN asset_accounts ac ON ac.id = a.account_id
+     WHERE NULLIF(trim(a.ticker), '') IS NOT NULL
+     ORDER BY a.market ASC, upper(trim(a.ticker)) ASC, a.created_at ASC`
+  );
+  return result.rows;
+}
+
+export async function listAssetQuantityHistory(assetIds: string[]): Promise<AssetQuantityHistory[]> {
+  if (assetIds.length === 0) {
+    return [];
+  }
+
+  const initialResult = await pool.query<AssetQuantityHistory>(
+    `SELECT
+       a.id AS "assetId",
+       a.valuation_date::text AS "date",
+       COALESCE(t.quantity, a.quantity)::float AS "quantity"
+     FROM asset_items a
+     LEFT JOIN asset_transactions t ON t.asset_id = a.id AND t.transaction_type = 'buy'
+     WHERE a.id = ANY($1::text[])
+       AND COALESCE(t.quantity, a.quantity) IS NOT NULL`,
+    [assetIds]
+  );
+  const deductionResult = await pool.query<{
+    assetId: string;
+    date: string;
+    quantity: number;
+  }>(
+    `SELECT
+       l.asset_id AS "assetId",
+       t.transaction_date::text AS "date",
+       COALESCE(SUM(l.quantity), 0)::float AS "quantity"
+     FROM asset_transaction_lots l
+     JOIN asset_transactions t ON t.id = l.transaction_id
+     WHERE l.asset_id = ANY($1::text[])
+       AND t.transaction_type IN ('sell', 'maturity')
+     GROUP BY l.asset_id, t.transaction_date
+     ORDER BY t.transaction_date ASC`,
+    [assetIds]
+  );
+  const events = new Map<string, AssetQuantityHistory[]>();
+
+  for (const initial of initialResult.rows) {
+    events.set(initial.assetId, [{ ...initial }]);
+  }
+
+  for (const deduction of deductionResult.rows) {
+    const assetEvents = events.get(deduction.assetId);
+    if (!assetEvents?.length) continue;
+
+    const previousQuantity = assetEvents.at(-1)?.quantity ?? 0;
+    assetEvents.push({
+      assetId: deduction.assetId,
+      date: deduction.date,
+      quantity: Math.max(0, previousQuantity - deduction.quantity)
+    });
+  }
+
+  return [...events.values()].flat().sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function upsertAssetPriceHistory(input: {
+  market: AssetMarket;
+  ticker: string;
+  priceDate: string;
+  closePrice: number;
+  currency: string;
+  source?: PriceSource;
+}): Promise<AssetPriceHistory> {
+  const result = await pool.query<AssetPriceHistory>(
+    `INSERT INTO asset_price_history (market, ticker, price_date, close_price, currency, source)
+     VALUES ($1, upper(trim($2)), $3, $4, upper(trim($5)), $6)
+     ON CONFLICT (market, ticker, price_date)
+     DO UPDATE SET
+       close_price = EXCLUDED.close_price,
+       currency = EXCLUDED.currency,
+       source = EXCLUDED.source,
+       updated_at = now()
+     RETURNING ${assetPriceHistoryColumns}`,
+    [input.market, input.ticker, input.priceDate, input.closePrice, input.currency, input.source ?? "manual"]
+  );
+  return result.rows[0];
+}
+
+export async function listAssetPriceHistory(
+  startDate: string,
+  endDate: string,
+  tickers?: Array<{ market: AssetMarket; ticker: string }>
+): Promise<AssetPriceHistory[]> {
+  const tickerKeys = tickers?.map((item) => `${item.market}:${item.ticker.trim().toUpperCase()}`) ?? null;
+  const result = await pool.query<AssetPriceHistory>(
+    `SELECT ${assetPriceHistoryColumns}
+     FROM asset_price_history
+     WHERE price_date BETWEEN $1 AND $2
+       AND ($3::text[] IS NULL OR market || ':' || upper(trim(ticker)) = ANY($3::text[]))
+     ORDER BY price_date ASC, market ASC, ticker ASC`,
+    [startDate, endDate, tickerKeys]
+  );
+  return result.rows;
+}
+
+export async function upsertFxRateHistory(input: {
+  baseCurrency: string;
+  quoteCurrency: string;
+  rateDate: string;
+  rate: number;
+  source?: PriceSource;
+}): Promise<FxRateHistory> {
+  const result = await pool.query<FxRateHistory>(
+    `INSERT INTO fx_rate_history (base_currency, quote_currency, rate_date, rate, source)
+     VALUES (upper(trim($1)), upper(trim($2)), $3, $4, $5)
+     ON CONFLICT (base_currency, quote_currency, rate_date)
+     DO UPDATE SET
+       rate = EXCLUDED.rate,
+       source = EXCLUDED.source,
+       updated_at = now()
+     RETURNING ${fxRateHistoryColumns}`,
+    [input.baseCurrency, input.quoteCurrency, input.rateDate, input.rate, input.source ?? "manual"]
+  );
+  return result.rows[0];
+}
+
+export async function listFxRateHistory(
+  baseCurrency: string,
+  quoteCurrency: string,
+  startDate: string,
+  endDate: string
+): Promise<FxRateHistory[]> {
+  const result = await pool.query<FxRateHistory>(
+    `SELECT ${fxRateHistoryColumns}
+     FROM fx_rate_history
+     WHERE base_currency = upper(trim($1))
+       AND quote_currency = upper(trim($2))
+       AND rate_date BETWEEN $3 AND $4
+     ORDER BY rate_date ASC`,
+    [baseCurrency, quoteCurrency, startDate, endDate]
+  );
+  return result.rows;
+}
+
+export async function listSimulationIncomes(): Promise<SimulationIncome[]> {
+  const result = await pool.query<SimulationIncome>(
+    `SELECT ${simulationIncomeColumns}
+     FROM simulation_incomes si
+     LEFT JOIN asset_accounts ac ON ac.id = si.account_id
+     ORDER BY si.start_date ASC, si.created_at ASC`
+  );
+  return result.rows;
+}
+
+export async function createSimulationIncome(input: {
+  accountId?: string | null;
+  type: SimulationIncomeType;
+  name: string;
+  amountKrw: number;
+  startDate: string;
+  endDate?: string | null;
+  repeatsIndefinitely: boolean;
+  availability: SimulationAvailability;
+  unlockDate?: string | null;
+  note?: string | null;
+}): Promise<SimulationIncome> {
+  const id = randomUUID();
+  const result = await pool.query<SimulationIncome>(
+    `WITH inserted AS (
+       INSERT INTO simulation_incomes (
+         id, account_id, type, name, amount_krw, start_date, end_date, repeats_indefinitely, availability, unlock_date, note
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING *
+     )
+     SELECT ${simulationIncomeColumns}
+     FROM inserted si
+     LEFT JOIN asset_accounts ac ON ac.id = si.account_id`,
+    [
+      id,
+      input.accountId ?? null,
+      input.type,
+      input.name,
+      input.amountKrw,
+      input.startDate,
+      input.type === "monthly" && !input.repeatsIndefinitely ? input.endDate ?? null : null,
+      input.type === "monthly" ? input.repeatsIndefinitely : false,
+      input.availability,
+      input.availability === "unlock_date" ? input.unlockDate ?? null : null,
+      input.note ?? ""
+    ]
+  );
+  return result.rows[0];
+}
+
+export async function updateSimulationIncome(
+  id: string,
+  input: {
+    accountId?: string | null;
+    type: SimulationIncomeType;
+    name: string;
+    amountKrw: number;
+    startDate: string;
+    endDate?: string | null;
+    repeatsIndefinitely: boolean;
+    availability: SimulationAvailability;
+    unlockDate?: string | null;
+    note?: string | null;
+  }
+): Promise<SimulationIncome | null> {
+  const result = await pool.query<SimulationIncome>(
+    `WITH updated AS (
+       UPDATE simulation_incomes
+       SET account_id = $2,
+           type = $3,
+           name = $4,
+           amount_krw = $5,
+           start_date = $6,
+           end_date = $7,
+           repeats_indefinitely = $8,
+           availability = $9,
+           unlock_date = $10,
+           note = $11,
+           updated_at = now()
+       WHERE id = $1
+       RETURNING *
+     )
+     SELECT ${simulationIncomeColumns}
+     FROM updated si
+     LEFT JOIN asset_accounts ac ON ac.id = si.account_id`,
+    [
+      id,
+      input.accountId ?? null,
+      input.type,
+      input.name,
+      input.amountKrw,
+      input.startDate,
+      input.type === "monthly" && !input.repeatsIndefinitely ? input.endDate ?? null : null,
+      input.type === "monthly" ? input.repeatsIndefinitely : false,
+      input.availability,
+      input.availability === "unlock_date" ? input.unlockDate ?? null : null,
+      input.note ?? ""
+    ]
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function deleteSimulationIncome(id: string): Promise<boolean> {
+  const result = await pool.query("DELETE FROM simulation_incomes WHERE id = $1", [id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
 export async function updateAssetPrice(input: {
   id: string;
   currentValue: number;
@@ -476,7 +832,10 @@ export async function updateAssetPrice(input: {
      SELECT
        u.*,
        ac.name AS "accountName",
-       ac.institution
+       ac.institution,
+       ac.liquidity_restricted AS "accountLiquidityRestricted",
+       ac.liquidity_unlock_date::text AS "accountLiquidityUnlockDate",
+       ac.liquidity_restriction_reason AS "accountLiquidityRestrictionReason"
      FROM updated u
      JOIN asset_accounts ac ON ac.id = u."accountId"`,
     [input.id, input.currentValue, input.purchaseFxRateToKrw ?? null, input.fxRateToKrw ?? null, input.source]
@@ -767,6 +1126,15 @@ async function deleteTransactionWithClient(client: pg.PoolClient, id: string): P
     return false;
   }
 
+  if (transaction.transactionType === "deposit") {
+    const result = await client.query("DELETE FROM asset_transactions WHERE id = $1", [id]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  if (isZeroQuantityTransaction(transaction)) {
+    return deleteZeroQuantityTransactionWithClient(client, transaction);
+  }
+
   if (transaction.transactionType === "sell" || transaction.transactionType === "maturity") {
     const lotResult = await client.query<{ assetId: string; quantity: number }>(
       `SELECT asset_id AS "assetId", quantity::float AS "quantity"
@@ -855,6 +1223,49 @@ async function deleteTransactionWithClient(client: pg.PoolClient, id: string): P
   const result = await client.query("DELETE FROM asset_transactions WHERE id = $1", [id]);
   if (transaction.transactionType === "buy" && transaction.assetId) {
     await client.query("DELETE FROM asset_items WHERE id = $1", [transaction.assetId]);
+  }
+
+  return (result.rowCount ?? 0) > 0;
+}
+
+function isZeroQuantityTransaction(transaction: { transactionType: TransactionType; quantity: number | null }): boolean {
+  return (transaction.transactionType === "buy" || transaction.transactionType === "sell") && transaction.quantity === 0;
+}
+
+async function deleteZeroQuantityTransactionWithClient(
+  client: pg.PoolClient,
+  transaction: { id: string; assetId: string | null; positionKey: string | null; transactionType: TransactionType }
+): Promise<boolean> {
+  const result = await client.query("DELETE FROM asset_transactions WHERE id = $1", [transaction.id]);
+
+  if (transaction.transactionType === "buy" && transaction.assetId) {
+    const assetResult = await client.query<{ quantity: number | null }>(
+      `SELECT quantity::float AS quantity
+       FROM asset_items
+       WHERE id = $1`,
+      [transaction.assetId]
+    );
+    const assetQuantity = assetResult.rows[0]?.quantity ?? null;
+    const dependentResult = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM asset_transactions
+       WHERE id <> $2
+         AND (
+           asset_id = $1
+           OR ($3::text IS NOT NULL AND position_key = $3)
+           OR EXISTS (
+             SELECT 1
+             FROM asset_transaction_lots l
+             WHERE l.transaction_id = asset_transactions.id
+               AND l.asset_id = $1
+           )
+         )`,
+      [transaction.assetId, transaction.id, transaction.positionKey]
+    );
+
+    if ((assetQuantity ?? 0) === 0 && Number(dependentResult.rows[0]?.count ?? 0) === 0) {
+      await client.query("DELETE FROM asset_items WHERE id = $1", [transaction.assetId]);
+    }
   }
 
   return (result.rowCount ?? 0) > 0;
@@ -1032,7 +1443,10 @@ async function updateAssetQuantityWithClient(
      SELECT
        u.*,
        ac.name AS "accountName",
-       ac.institution
+       ac.institution,
+       ac.liquidity_restricted AS "accountLiquidityRestricted",
+       ac.liquidity_unlock_date::text AS "accountLiquidityUnlockDate",
+       ac.liquidity_restriction_reason AS "accountLiquidityRestrictionReason"
      FROM updated u
      JOIN asset_accounts ac ON ac.id = u."accountId"`,
     [id, quantity, transactionDate, fxRateToKrw]
@@ -1199,7 +1613,10 @@ async function updateCashValueWithClient(
      SELECT
        u.*,
        ac.name AS "accountName",
-       ac.institution
+       ac.institution,
+       ac.liquidity_restricted AS "accountLiquidityRestricted",
+       ac.liquidity_unlock_date::text AS "accountLiquidityUnlockDate",
+       ac.liquidity_restriction_reason AS "accountLiquidityRestrictionReason"
      FROM updated u
      JOIN asset_accounts ac ON ac.id = u."accountId"`,
     [id, currentValue, purchaseFxRateToKrw, fxRateToKrw, valuationDate]
@@ -1254,7 +1671,7 @@ async function applyFifoSellLots(
   let remaining = sellQuantity;
   const deductions: Array<{ assetId: string; quantity: number; realizedGainKrw: number }> = [];
 
-  for (const lot of [...lots].sort((a, b) => a.valuationDate.localeCompare(b.valuationDate) || a.createdAt.localeCompare(b.createdAt))) {
+  for (const lot of [...lots].sort((a, b) => a.valuationDate.localeCompare(b.valuationDate) || compareCreatedAt(a.createdAt, b.createdAt))) {
     if (remaining <= 0) break;
     const available = lot.quantity ?? 0;
     if (available <= 0) continue;
@@ -1283,6 +1700,10 @@ async function applyFifoSellLots(
   }
 
   return deductions;
+}
+
+function compareCreatedAt(left: string | Date, right: string | Date): number {
+  return new Date(left).getTime() - new Date(right).getTime();
 }
 
 async function insertTransactionLots(
@@ -1425,9 +1846,16 @@ function estimateAssetNativeCost(asset: AssetValuation) {
   return estimateAssetNativeValue(asset);
 }
 
-export async function listStoredHistory(startDate: string, endDate: string): Promise<HistoryPoint[]> {
+export async function listStoredHistory(startDate: string, endDate: string, assetIds: string[]): Promise<HistoryPoint[]> {
+  if (assetIds.length === 0) {
+    return [];
+  }
+
   const result = await pool.query<HistoryPoint>(
-    `SELECT
+    `WITH required_assets AS (
+       SELECT unnest($3::text[]) AS asset_id
+     )
+     SELECT
        h.valuation_date::text AS "date",
        COALESCE(SUM(h.value_krw), 0)::float AS "totalValueKrw",
        COALESCE(SUM(CASE WHEN a.liquid_from <= h.valuation_date THEN h.value_krw ELSE 0 END), 0)::float AS "liquidValueKrw",
@@ -1444,10 +1872,12 @@ export async function listStoredHistory(startDate: string, endDate: string): Pro
        (COALESCE(SUM(h.value_krw), 0) - COALESCE(SUM(h.cost_krw), 0))::float AS "totalIncomeKrw"
      FROM asset_value_history h
      JOIN asset_items a ON a.id = h.asset_id
+     JOIN required_assets r ON r.asset_id = h.asset_id
      WHERE h.valuation_date BETWEEN $1 AND $2
      GROUP BY h.valuation_date
+     HAVING COUNT(DISTINCT h.asset_id) = (SELECT COUNT(*) FROM required_assets)
      ORDER BY h.valuation_date ASC`,
-    [startDate, endDate]
+    [startDate, endDate, assetIds]
   );
   return result.rows;
 }

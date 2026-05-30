@@ -12,6 +12,14 @@ export type FxQuote = {
   date: string;
 };
 
+export type HistoricalMarketQuote = MarketQuote & {
+  currency: string;
+};
+
+export type HistoricalFxQuote = FxQuote & {
+  source: "yahoo";
+};
+
 export async function fetchLatestQuote(asset: Pick<AssetWithAccount, "ticker" | "market">): Promise<MarketQuote> {
   if (!asset.ticker?.trim()) {
     throw new Error("티커가 없습니다.");
@@ -130,6 +138,66 @@ export async function fetchUsdKrwRate(date?: string): Promise<FxQuote> {
   throw new Error("환율 데이터를 찾지 못했습니다.");
 }
 
+export async function fetchHistoricalQuotes(
+  asset: Pick<AssetWithAccount, "ticker" | "market" | "currency">,
+  startDate: string,
+  endDate: string
+): Promise<HistoricalMarketQuote[]> {
+  if (!asset.ticker?.trim()) {
+    throw new Error("티커가 없습니다.");
+  }
+
+  const symbol = asset.ticker.trim();
+  const url = yahooChartUrl(symbol, startDate, endDate);
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "youngs-plan/1.0"
+    }
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    throw new Error(`과거 가격 조회 실패 (${response?.status ?? "network"})`);
+  }
+
+  const rows = parseYahooDailyCloses(await response.json(), symbol).map((quote) => ({
+    ...quote,
+    currency: asset.currency,
+    source: "yahoo" as const
+  }));
+
+  if (rows.length === 0) {
+    throw new Error("과거 가격 데이터를 찾지 못했습니다.");
+  }
+
+  return rows.filter((quote) => quote.date >= startDate && quote.date <= endDate);
+}
+
+export async function fetchUsdKrwHistory(startDate: string, endDate: string): Promise<HistoricalFxQuote[]> {
+  const response = await fetch(yahooChartUrl("KRW=X", startDate, endDate), {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "youngs-plan/1.0"
+    }
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    throw new Error(`과거 환율 조회 실패 (${response?.status ?? "network"})`);
+  }
+
+  const rows = parseYahooDailyCloses(await response.json(), "KRW=X").map((quote) => ({
+    rate: quote.price,
+    date: quote.date,
+    source: "yahoo" as const
+  }));
+
+  if (rows.length === 0) {
+    throw new Error("과거 환율 데이터를 찾지 못했습니다.");
+  }
+
+  return rows.filter((quote) => quote.date >= startDate && quote.date <= endDate);
+}
+
 function yahooFxHistoryUrl(date: string) {
   const target = new Date(`${date}T00:00:00.000Z`);
   const start = new Date(target);
@@ -139,6 +207,15 @@ function yahooFxHistoryUrl(date: string) {
   const period1 = Math.floor(start.getTime() / 1000);
   const period2 = Math.floor(end.getTime() / 1000);
   return `https://query1.finance.yahoo.com/v8/finance/chart/KRW=X?period1=${period1}&period2=${period2}&interval=1d`;
+}
+
+function yahooChartUrl(symbol: string, startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() + 1);
+  const period1 = Math.floor(start.getTime() / 1000);
+  const period2 = Math.floor(end.getTime() / 1000);
+  return `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${period1}&period2=${period2}&interval=1d`;
 }
 
 async function fetchYahooQuote(ticker: string): Promise<MarketQuote | null> {
@@ -159,7 +236,12 @@ async function fetchYahooQuote(ticker: string): Promise<MarketQuote | null> {
     return null;
   }
 
-  const body = (await response.json()) as {
+  const rows = parseYahooDailyCloses(await response.json(), symbol);
+  return rows.at(-1) ?? null;
+}
+
+function parseYahooDailyCloses(body: unknown, symbol: string): MarketQuote[] {
+  const parsed = body as {
     chart?: {
       result?: Array<{
         timestamp?: number[];
@@ -172,22 +254,24 @@ async function fetchYahooQuote(ticker: string): Promise<MarketQuote | null> {
     };
   };
 
-  const result = body.chart?.result?.[0];
+  const result = parsed.chart?.result?.[0];
   const closes = result?.indicators?.quote?.[0]?.close ?? [];
   const timestamps = result?.timestamp ?? [];
-  for (let index = closes.length - 1; index >= 0; index -= 1) {
+  const rows: MarketQuote[] = [];
+
+  for (let index = 0; index < closes.length; index += 1) {
     const close = closes[index];
     if (close !== null && close !== undefined && Number.isFinite(close) && close > 0) {
-      return {
+      rows.push({
         price: close,
         date: new Date((timestamps[index] ?? Date.now() / 1000) * 1000).toISOString().slice(0, 10),
         symbol,
         source: "yahoo"
-      };
+      });
     }
   }
 
-  return null;
+  return rows;
 }
 
 function normalizeStooqSymbol(ticker: string, market: AssetWithAccount["market"]): string {

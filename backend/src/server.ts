@@ -5,15 +5,23 @@ import { z } from "zod";
 import {
   createAccount,
   createAsset,
+  createSimulationIncome,
   createTransaction,
   deleteAccount,
   deleteAsset,
+  deleteSimulationIncome,
   deleteTransaction,
+  listAssetQuantityHistory,
+  listAssetPriceHistory,
   listAccounts,
   listAssets,
+  listAssetsForHistory,
+  listFxRateHistory,
   listPositions,
+  listSimulationIncomes,
   listStoredHistory,
   listTickerAssets,
+  listTickerAssetsForHistory,
   listTransactions,
   markAssetPriceError,
   processMaturedBonds,
@@ -22,10 +30,13 @@ import {
   updateAccount,
   updateAsset,
   updateAssetPrice,
-  updateTransaction
+  updateSimulationIncome,
+  updateTransaction,
+  upsertAssetPriceHistory,
+  upsertFxRateHistory
 } from "./db.js";
-import { fetchLatestQuote, fetchUsdKrwRate, searchTickers } from "./price.js";
-import { buildProjectionHistory, mergeHistoryPoints, summarizeByDate, valueAssetsForDate } from "./valuation.js";
+import { fetchHistoricalQuotes, fetchLatestQuote, fetchUsdKrwHistory, fetchUsdKrwRate, searchTickers } from "./price.js";
+import { buildProjectionHistory, effectiveLiquidFrom, mergeHistoryPoints, summarizeByDate, valueAssetsForDate } from "./valuation.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -39,7 +50,18 @@ app.use("/api", (_req, res, next) => {
 
 const accountSchema = z.object({
   name: z.string().min(1),
-  institution: z.string().optional().nullable()
+  institution: z.string().optional().nullable(),
+  liquidityRestricted: z.coerce.boolean().default(false),
+  liquidityUnlockDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  liquidityRestrictionReason: z.string().optional().nullable()
+}).superRefine((input, context) => {
+  if (input.liquidityRestricted && !input.liquidityUnlockDate) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["liquidityUnlockDate"],
+      message: "현금화 제한 계좌는 해지 가능일을 입력해 주세요."
+    });
+  }
 });
 
 const assetSchema = z.object({
@@ -112,6 +134,48 @@ const transactionSchema = z.discriminatedUnion("transactionType", [
 ]);
 
 const historyRangeSchema = z.enum(["1w", "1m", "3m", "6m", "1y", "all"]).default("1m");
+const historyRefreshSchema = z.object({
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+});
+const simulationIncomeSchema = z
+  .object({
+    accountId: z.string().optional().nullable(),
+    type: z.enum(["monthly", "one_time"]),
+    name: z.string().trim().min(1),
+    amountKrw: z.coerce.number().positive(),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+    repeatsIndefinitely: z.coerce.boolean().default(false),
+    availability: z.enum(["immediate", "unlock_date", "unavailable"]),
+    unlockDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+    note: z.string().optional().nullable()
+  })
+  .superRefine((input, context) => {
+    if (input.type === "monthly" && !input.repeatsIndefinitely && !input.endDate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endDate"],
+        message: "월 수입 종료일을 입력하거나 계속 반복을 켜 주세요."
+      });
+    }
+
+    if (input.type === "monthly" && input.endDate && input.endDate < input.startDate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endDate"],
+        message: "월 수입 종료일은 시작일 이후여야 합니다."
+      });
+    }
+
+    if (input.availability === "unlock_date" && !input.unlockDate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["unlockDate"],
+        message: "제한 해제일을 입력해 주세요."
+      });
+    }
+  });
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
@@ -263,6 +327,50 @@ app.delete("/api/transactions/:id", async (req, res, next) => {
   }
 });
 
+app.get("/api/simulation/incomes", async (_req, res, next) => {
+  try {
+    res.json(await listSimulationIncomes());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/simulation/incomes", async (req, res, next) => {
+  try {
+    const input = simulationIncomeSchema.parse(req.body);
+    res.status(201).json(await createSimulationIncome(input));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/simulation/incomes/:id", async (req, res, next) => {
+  try {
+    const input = simulationIncomeSchema.parse(req.body);
+    const income = await updateSimulationIncome(req.params.id, input);
+    if (!income) {
+      res.status(404).json({ message: "Simulation income not found" });
+      return;
+    }
+    res.json(income);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/simulation/incomes/:id", async (req, res, next) => {
+  try {
+    const deleted = await deleteSimulationIncome(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ message: "Simulation income not found" });
+      return;
+    }
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/summary", async (req, res, next) => {
   try {
     const targetDate = String(req.query.date ?? today());
@@ -280,7 +388,9 @@ app.get("/api/history", async (req, res, next) => {
     const targetDate = String(req.query.date ?? today());
     const range = historyRangeSchema.parse(req.query.range ?? "1m");
     await processMaturedBonds(maturityProcessDate(targetDate));
-    const assets = await listAssets();
+    const currentAssets = await listAssets();
+    const preliminaryWindow = historyWindow(currentAssets, targetDate, range);
+    const assets = await listAssetsForHistory(preliminaryWindow.endDate);
     const rangeWindow = historyWindow(assets, targetDate, range);
     const startDate = rangeWindow.startDate;
     const dailyIncome = await transactionTotalsByDate(startDate, rangeWindow.endDate);
@@ -288,8 +398,24 @@ app.get("/api/history", async (req, res, next) => {
     const incomesByDate = Object.fromEntries(
       dailyIncome.map((item) => [item.date, { realizedGainKrw: item.realizedGainKrw, dividendIncomeKrw: item.dividendIncomeKrw }])
     );
-    const projection = buildProjectionHistory(assets, rangeWindow.endDate, rangeWindow.days, incomesByDate, initialIncome);
-    const stored = await listStoredHistory(projection[0]?.date ?? rangeWindow.startDate, rangeWindow.endDate);
+    const tickerKeys = uniqueTickerKeys(assets);
+    const [priceHistory, fxHistory, quantityHistory] = await Promise.all([
+      listAssetPriceHistory(startDate, rangeWindow.endDate, tickerKeys),
+      assets.some((asset) => asset.currency === "USD" || asset.market === "us")
+        ? listFxRateHistory("USD", "KRW", startDate, rangeWindow.endDate)
+        : Promise.resolve([]),
+      listAssetQuantityHistory(assets.map((asset) => asset.id))
+    ]);
+    const projection = buildProjectionHistory(assets, rangeWindow.endDate, rangeWindow.days, incomesByDate, initialIncome, {
+      prices: priceHistory,
+      fxRates: fxHistory,
+      quantities: quantityHistory
+    });
+    const stored = await listStoredHistory(
+      projection[0]?.date ?? rangeWindow.startDate,
+      rangeWindow.endDate,
+      assets.map((asset) => asset.id)
+    );
 
     res.json({
       range,
@@ -349,6 +475,76 @@ app.post("/api/prices/refresh", async (_req, res, next) => {
     }
 
     res.json({ updatedAt: new Date().toISOString(), results });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/prices/history/refresh", async (req, res, next) => {
+  try {
+    const input = historyRefreshSchema.parse(req.body);
+    if (input.startDate > input.endDate) {
+      throw new Error("시작일은 종료일보다 늦을 수 없습니다.");
+    }
+
+    const assets = uniqueTickerAssets(await listTickerAssetsForHistory());
+    const results = [];
+
+    for (const asset of assets) {
+      try {
+        const quotes = await fetchHistoricalQuotes(asset, input.startDate, input.endDate);
+        for (const quote of quotes) {
+          await upsertAssetPriceHistory({
+            market: asset.market,
+            ticker: asset.ticker ?? quote.symbol,
+            priceDate: quote.date,
+            closePrice: quote.price,
+            currency: quote.currency,
+            source: quote.source
+          });
+        }
+        results.push({
+          ticker: asset.ticker,
+          market: asset.market,
+          ok: true,
+          count: quotes.length,
+          source: "yahoo"
+        });
+      } catch (error) {
+        results.push({
+          ticker: asset.ticker,
+          market: asset.market,
+          ok: false,
+          count: 0,
+          message: error instanceof Error ? error.message : "과거 가격 조회 실패"
+        });
+      }
+    }
+
+    let fxResult: { ok: boolean; count: number; message?: string } | null = null;
+    if (assets.some((asset) => asset.currency === "USD" || asset.market === "us")) {
+      try {
+        const rates = await fetchUsdKrwHistory(input.startDate, input.endDate);
+        for (const rate of rates) {
+          await upsertFxRateHistory({
+            baseCurrency: "USD",
+            quoteCurrency: "KRW",
+            rateDate: rate.date,
+            rate: rate.rate,
+            source: rate.source
+          });
+        }
+        fxResult = { ok: true, count: rates.length };
+      } catch (error) {
+        fxResult = {
+          ok: false,
+          count: 0,
+          message: error instanceof Error ? error.message : "과거 환율 조회 실패"
+        };
+      }
+    }
+
+    res.json({ updatedAt: new Date().toISOString(), startDate: input.startDate, endDate: input.endDate, results, fxResult });
   } catch (error) {
     next(error);
   }
@@ -433,7 +629,7 @@ function historyWindow(
   }
 
   const startDate = minDate([targetDate, ...assets.map((asset) => asset.valuationDate)]);
-  const endDate = maxDate([targetDate, ...assets.map((asset) => asset.liquidFrom)]);
+  const endDate = maxDate([targetDate, ...assets.map((asset) => effectiveLiquidFrom(asset))]);
   const days = Math.min(1826, daysInclusive(startDate, endDate));
 
   return {
@@ -461,6 +657,30 @@ function shiftDate(dateValue: string, days: number) {
   const date = new Date(`${dateValue}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function uniqueTickerKeys(assets: Awaited<ReturnType<typeof listAssets>>) {
+  const seen = new Set<string>();
+  return assets
+    .filter((asset) => asset.ticker?.trim())
+    .map((asset) => ({ market: asset.market, ticker: asset.ticker?.trim().toUpperCase() ?? "" }))
+    .filter((asset) => {
+      const key = `${asset.market}:${asset.ticker}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function uniqueTickerAssets(assets: Awaited<ReturnType<typeof listTickerAssetsForHistory>>) {
+  const seen = new Set<string>();
+  return assets.filter((asset) => {
+    if (!asset.ticker?.trim()) return false;
+    const key = `${asset.market}:${asset.ticker?.trim().toUpperCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function resolvePurchaseFxRate(currentRate: number, purchaseDate: string) {

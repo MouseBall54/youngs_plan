@@ -1,4 +1,18 @@
-import type { AssetWithAccount, AssetValuation, BreakdownItem, HistoryPoint } from "./types.js";
+import type {
+  AssetPriceHistory,
+  AssetQuantityHistory,
+  AssetWithAccount,
+  AssetValuation,
+  BreakdownItem,
+  FxRateHistory,
+  HistoryPoint
+} from "./types.js";
+
+export type HistoricalValuationData = {
+  prices?: AssetPriceHistory[];
+  fxRates?: FxRateHistory[];
+  quantities?: AssetQuantityHistory[];
+};
 
 export function estimateAssetValueKrw(
   asset: Pick<AssetWithAccount, "type" | "currentValue" | "quantity" | "averageCost" | "fxRateToKrw">
@@ -22,15 +36,70 @@ export function estimateAssetCostKrw(
   return 0;
 }
 
-export function isLiquidBy(asset: Pick<AssetWithAccount, "liquidFrom">, targetDate: string): boolean {
-  return asset.liquidFrom <= targetDate;
+export function effectiveLiquidFrom(
+  asset: Pick<AssetWithAccount, "liquidFrom" | "accountLiquidityRestricted" | "accountLiquidityUnlockDate">
+): string {
+  if (!asset.accountLiquidityRestricted || !asset.accountLiquidityUnlockDate) return asset.liquidFrom;
+  return maxDate([asset.liquidFrom, asset.accountLiquidityUnlockDate]);
 }
 
-export function valueAssetsForDate(assets: AssetWithAccount[], targetDate: string): AssetValuation[] {
+export function liquidityBlockReason(
+  asset: Pick<AssetWithAccount, "liquidFrom" | "accountLiquidityRestricted" | "accountLiquidityUnlockDate">,
+  targetDate: string
+): "liquid" | "asset" | "account" {
+  const effectiveDate = effectiveLiquidFrom(asset);
+  if (effectiveDate <= targetDate) return "liquid";
+  if (asset.accountLiquidityRestricted && asset.accountLiquidityUnlockDate && asset.accountLiquidityUnlockDate >= asset.liquidFrom) {
+    return "account";
+  }
+  return "asset";
+}
+
+export function isLiquidBy(
+  asset: Pick<AssetWithAccount, "liquidFrom" | "accountLiquidityRestricted" | "accountLiquidityUnlockDate">,
+  targetDate: string
+): boolean {
+  return effectiveLiquidFrom(asset) <= targetDate;
+}
+
+export function valueAssetsForDate(
+  assets: AssetWithAccount[],
+  targetDate: string,
+  historicalData: HistoricalValuationData = {}
+): AssetValuation[] {
+  const priceLookup = buildSortedHistoricalLookup(historicalData.prices ?? [], (item) => `${item.market}:${item.ticker.toUpperCase()}`);
+  const fxLookup = buildSortedHistoricalLookup(
+    historicalData.fxRates ?? [],
+    (item) => `${item.baseCurrency.toUpperCase()}:${item.quoteCurrency.toUpperCase()}`
+  );
+  const quantityLookup = buildSortedHistoricalLookup(historicalData.quantities ?? [], (item) => item.assetId);
+
   return assets.map((asset) => {
-    const valueKrw = estimateAssetValueKrw(asset);
-    const costKrw = estimateAssetCostKrw(asset);
+    const historicalPrice = asset.ticker
+      ? latestOnOrBefore(priceLookup.get(`${asset.market}:${asset.ticker.toUpperCase()}`) ?? [], targetDate)
+      : undefined;
+    const historicalFxRate =
+      asset.currency.toUpperCase() === "USD" || asset.market === "us"
+        ? latestOnOrBefore(fxLookup.get("USD:KRW") ?? [], targetDate)?.rate ?? asset.fxRateToKrw
+        : asset.fxRateToKrw;
+    const historicalQuantity = latestOnOrBefore(quantityLookup.get(asset.id) ?? [], targetDate)?.quantity;
+    const valuedAsset = historicalPrice
+      ? {
+          ...asset,
+          quantity: historicalQuantity ?? asset.quantity,
+          currentValue: historicalPrice.closePrice,
+          fxRateToKrw: historicalFxRate
+        }
+      : {
+          ...asset,
+          quantity: historicalQuantity ?? asset.quantity,
+          fxRateToKrw: historicalFxRate
+        };
+    const isHeldByDate = targetDate >= asset.valuationDate;
+    const valueKrw = isHeldByDate ? estimateAssetValueKrw(valuedAsset) : 0;
+    const costKrw = isHeldByDate ? estimateAssetCostKrw(valuedAsset) : 0;
     const gainKrw = roundKrw(valueKrw - costKrw);
+    const assetEffectiveLiquidFrom = effectiveLiquidFrom(asset);
 
     return {
       ...asset,
@@ -38,7 +107,9 @@ export function valueAssetsForDate(assets: AssetWithAccount[], targetDate: strin
       costKrw,
       gainKrw,
       gainRate: costKrw > 0 ? roundRate((gainKrw / costKrw) * 100) : null,
-      isLiquidByDate: isLiquidBy(asset, targetDate)
+      isLiquidByDate: assetEffectiveLiquidFrom <= targetDate,
+      effectiveLiquidFrom: assetEffectiveLiquidFrom,
+      liquidityBlockReason: liquidityBlockReason(asset, targetDate)
     };
   });
 }
@@ -46,9 +117,10 @@ export function valueAssetsForDate(assets: AssetWithAccount[], targetDate: strin
 export function summarizeByDate(
   assets: AssetWithAccount[],
   targetDate: string,
-  income: { realizedGainKrw?: number; dividendIncomeKrw?: number } = {}
+  income: { realizedGainKrw?: number; dividendIncomeKrw?: number } = {},
+  historicalData: HistoricalValuationData = {}
 ) {
-  const valued = valueAssetsForDate(assets, targetDate);
+  const valued = valueAssetsForDate(assets, targetDate, historicalData);
   const liquidAssets = valued.filter((asset) => asset.isLiquidByDate);
   const totalValueKrw = roundKrw(valued.reduce((sum, asset) => sum + asset.valueKrw, 0));
   const totalCostKrw = roundKrw(valued.reduce((sum, asset) => sum + asset.costKrw, 0));
@@ -57,6 +129,12 @@ export function summarizeByDate(
   const dividendIncomeKrw = roundKrw(income.dividendIncomeKrw ?? 0);
   const totalGainKrw = roundKrw(unrealizedGainKrw + realizedGainKrw + dividendIncomeKrw);
   const liquidValueKrw = roundKrw(liquidAssets.reduce((sum, asset) => sum + asset.valueKrw, 0));
+  const accountLockedValueKrw = roundKrw(
+    valued.reduce((sum, asset) => sum + (asset.liquidityBlockReason === "account" ? asset.valueKrw : 0), 0)
+  );
+  const assetLockedValueKrw = roundKrw(
+    valued.reduce((sum, asset) => sum + (asset.liquidityBlockReason === "asset" ? asset.valueKrw : 0), 0)
+  );
 
   return {
     date: targetDate,
@@ -70,6 +148,8 @@ export function summarizeByDate(
     totalIncomeKrw: totalGainKrw,
     liquidValueKrw,
     lockedValueKrw: roundKrw(totalValueKrw - liquidValueKrw),
+    accountLockedValueKrw,
+    assetLockedValueKrw,
     liquidRatio: totalValueKrw > 0 ? roundRate((liquidValueKrw / totalValueKrw) * 100) : 0,
     byType: groupSum(valued, (asset) => asset.type),
     byAccount: groupSum(valued, (asset) => asset.accountName),
@@ -86,14 +166,15 @@ export function buildProjectionHistory(
   endDate: string,
   days: number,
   incomesByDate: Record<string, { realizedGainKrw: number; dividendIncomeKrw: number }> = {},
-  initialIncome: { realizedGainKrw?: number; dividendIncomeKrw?: number } = {}
+  initialIncome: { realizedGainKrw?: number; dividendIncomeKrw?: number } = {},
+  historicalData: HistoricalValuationData = {}
 ): HistoryPoint[] {
   let realizedGainKrw = initialIncome.realizedGainKrw ?? 0;
   let dividendIncomeKrw = initialIncome.dividendIncomeKrw ?? 0;
   return eachDate(endDate, days).map((date) => {
     realizedGainKrw += incomesByDate[date]?.realizedGainKrw ?? 0;
     dividendIncomeKrw += incomesByDate[date]?.dividendIncomeKrw ?? 0;
-    const summary = summarizeByDate(assets, date, { realizedGainKrw, dividendIncomeKrw });
+    const summary = summarizeByDate(assets, date, { realizedGainKrw, dividendIncomeKrw }, historicalData);
     return {
       date,
       totalValueKrw: summary.totalValueKrw,
@@ -187,6 +268,38 @@ function groupSum<T>(items: T[], keyFn: (item: T) => string): Record<string, num
     groups[key] = roundKrw((groups[key] ?? 0) + value);
     return groups;
   }, {});
+}
+
+function buildSortedHistoricalLookup<T extends { priceDate?: string; rateDate?: string; date?: string }>(
+  rows: T[],
+  keyFn: (item: T) => string
+): Map<string, T[]> {
+  const byKey = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = keyFn(row);
+    byKey.set(key, [...(byKey.get(key) ?? []), row]);
+  }
+
+  for (const [key, values] of byKey) {
+    byKey.set(key, [...values].sort((a, b) => rowDate(a).localeCompare(rowDate(b))));
+  }
+
+  return byKey;
+}
+
+function latestOnOrBefore<T extends { priceDate?: string; rateDate?: string; date?: string }>(rows: T[], targetDate: string): T | undefined {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (rowDate(rows[index]) <= targetDate) return rows[index];
+  }
+  return undefined;
+}
+
+function rowDate(row: { priceDate?: string; rateDate?: string; date?: string }) {
+  return row.priceDate ?? row.rateDate ?? row.date ?? "";
+}
+
+function maxDate(dates: string[]) {
+  return dates.reduce((max, date) => (date > max ? date : max));
 }
 
 function roundKrw(value: number): number {

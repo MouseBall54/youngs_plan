@@ -1,12 +1,17 @@
 export type AssetType = "stock" | "real_estate" | "cash" | "bond" | "dividend";
 export type AssetMarket = "domestic" | "us" | "other";
-export type TransactionType = "buy" | "sell" | "dividend" | "maturity";
+export type TransactionType = "buy" | "sell" | "dividend" | "maturity" | "deposit";
 export type PriceSource = "manual" | "yahoo" | "stooq";
+export type SimulationIncomeType = "monthly" | "one_time";
+export type SimulationAvailability = "immediate" | "unlock_date" | "unavailable";
 
 export type Account = {
   id: string;
   name: string;
   institution: string | null;
+  liquidityRestricted: boolean;
+  liquidityUnlockDate: string | null;
+  liquidityRestrictionReason: string | null;
   createdAt: string;
 };
 
@@ -41,6 +46,9 @@ export type Asset = {
 export type AssetWithAccount = Asset & {
   accountName: string;
   institution: string | null;
+  accountLiquidityRestricted: boolean;
+  accountLiquidityUnlockDate: string | null;
+  accountLiquidityRestrictionReason: string | null;
 };
 
 export type AssetValuation = AssetWithAccount & {
@@ -49,6 +57,14 @@ export type AssetValuation = AssetWithAccount & {
   gainKrw: number;
   gainRate: number | null;
   isLiquidByDate: boolean;
+  effectiveLiquidFrom: string;
+  liquidityBlockReason: "liquid" | "asset" | "account";
+};
+
+export type AssetQuantityHistory = {
+  assetId: string;
+  date: string;
+  quantity: number | null;
 };
 
 export type AssetTransaction = {
@@ -117,6 +133,8 @@ export type Summary = {
   totalIncomeKrw: number;
   liquidValueKrw: number;
   lockedValueKrw: number;
+  accountLockedValueKrw: number;
+  assetLockedValueKrw: number;
   liquidRatio: number;
   byType: Record<string, number>;
   byAccount: Record<string, number>;
@@ -137,6 +155,44 @@ export type PriceRefreshResult = {
   source?: PriceSource;
   fxRateToKrw?: number;
   message?: string;
+};
+
+export type AssetPriceHistory = {
+  market: AssetMarket;
+  ticker: string;
+  priceDate: string;
+  closePrice: number;
+  currency: string;
+  source: PriceSource;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FxRateHistory = {
+  baseCurrency: string;
+  quoteCurrency: string;
+  rateDate: string;
+  rate: number;
+  source: PriceSource;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SimulationIncome = {
+  id: string;
+  accountId: string | null;
+  accountName: string | null;
+  type: SimulationIncomeType;
+  name: string;
+  amountKrw: number;
+  startDate: string;
+  endDate: string | null;
+  repeatsIndefinitely: boolean;
+  availability: SimulationAvailability;
+  unlockDate: string | null;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type TickerSearchResult = {
