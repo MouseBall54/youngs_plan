@@ -213,3 +213,14 @@ export type SimulationIncome = {
 };
 
 export type SimulationIncomeInput = Omit<SimulationIncome, "id" | "accountName" | "createdAt" | "updatedAt">;
+
+export type DashboardData = {
+  date: string;
+  accounts: Account[];
+  summary: Summary;
+  positions: AssetPosition[];
+  history: HistoryPoint[];
+  transactions: AssetTransaction[];
+  syncedAt: string;
+  isSnapshot: boolean;
+};

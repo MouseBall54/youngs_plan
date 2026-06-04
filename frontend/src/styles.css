@@ -207,6 +207,35 @@ button[type="submit"] {
   color: #126146;
 }
 
+.snapshotStatus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 12px;
+  padding: 9px 11px;
+  border: 1px solid #e2cf95;
+  border-radius: 8px;
+  background: #fff8e7;
+  color: #715019;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.snapshotStatus.live {
+  border-color: #bddfce;
+  background: #eef9f4;
+  color: #176149;
+}
+
+.snapshotStatus time {
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  opacity: 0.82;
+  text-align: right;
+}
+
 .heroCard {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(220px, 0.9fr);
@@ -314,6 +343,37 @@ button[type="submit"] {
   border: 1px solid #dce3e8;
   border-radius: 8px;
   background: #ffffff;
+  color: inherit;
+  text-align: left;
+}
+
+button.metric {
+  font: inherit;
+}
+
+.metric.clickable {
+  position: relative;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.metric.clickable:hover {
+  border-color: #b8c8d5;
+  box-shadow: 0 10px 20px rgba(39, 66, 87, 0.08);
+  transform: translateY(-1px);
+}
+
+.metric.clickable:focus-visible {
+  outline: 3px solid rgba(39, 66, 87, 0.18);
+  outline-offset: 2px;
+}
+
+.metric.selected {
+  border-color: #7fa4bd;
+  box-shadow: inset 0 0 0 1px #7fa4bd, 0 10px 20px rgba(39, 66, 87, 0.08);
 }
 
 .metric.high {
@@ -369,6 +429,157 @@ button[type="submit"] {
 .metric.warning span,
 .metric.warning strong {
   color: var(--warning);
+}
+
+.metricDetailPanel {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
+  border: 1px solid #dce3e8;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.metricDetailHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  border-bottom: 1px solid var(--neutral-200);
+  padding-bottom: 10px;
+}
+
+.metricDetailHeader span,
+.metricDetailHeader small,
+.metricDetailItem small,
+.metricDetailFooter span {
+  display: block;
+  color: var(--neutral-600);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.metricDetailHeader strong {
+  display: block;
+  min-width: 0;
+  color: var(--neutral-900);
+  font-size: 1.02rem;
+  overflow-wrap: anywhere;
+}
+
+.metricDetailHeader > div:last-child {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.metricDetailHeader b {
+  color: var(--neutral-900);
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.metricDetailHeader button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #d9e0e6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #274257;
+}
+
+.metricDetailList {
+  display: grid;
+  max-height: 340px;
+  overflow: auto;
+  gap: 7px;
+  padding-right: 2px;
+}
+
+.metricDetailSection {
+  display: grid;
+  gap: 7px;
+}
+
+.metricDetailSectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 1px;
+  color: var(--neutral-700);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.metricDetailSectionHeader.positive {
+  color: #0f7a58;
+}
+
+.metricDetailSectionHeader.negative {
+  color: #c24135;
+}
+
+.metricDetailSectionHeader b {
+  font-size: 0.7rem;
+}
+
+.metricDetailItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--neutral-200);
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--surface-subtle);
+}
+
+.metricDetailItem > span {
+  min-width: 0;
+}
+
+.metricDetailItem strong,
+.metricDetailItem b,
+.metricDetailItem em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--neutral-900);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricDetailItem small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricDetailItem > div {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.metricDetailItem em {
+  font-size: 0.74rem;
+  font-style: normal;
+}
+
+.metricDetailFooter {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--neutral-200);
+  padding-top: 9px;
+}
+
+.metricDetailFooter b {
+  color: var(--neutral-900);
+  white-space: nowrap;
 }
 
 .riskPanel {
@@ -486,6 +697,12 @@ button[type="submit"] {
   display: grid;
   gap: 8px;
   min-height: 220px;
+  border-radius: 8px;
+  outline: none;
+}
+
+.simulationChartWrap:focus-visible {
+  box-shadow: 0 0 0 3px rgba(36, 99, 235, 0.16);
 }
 
 .simulationChartWrap svg {
@@ -575,6 +792,7 @@ button[type="submit"] {
 }
 
 .simulationPointDetailHeader span,
+.simulationPointDetailHeader small,
 .simulationDetailMetrics small,
 .simulationDetailSection small,
 .simulationDetailItem small {
@@ -1618,6 +1836,10 @@ button[type="submit"] {
   background: #ffffff;
 }
 
+.tradeEntryPanel {
+  scroll-margin-top: 118px;
+}
+
 .assetWorkspace {
   margin-top: 10px;
   padding: 0;
@@ -1714,8 +1936,40 @@ button[type="submit"] {
 }
 
 .chartWrap {
+  position: relative;
   min-height: 206px;
   padding-top: 2px;
+  border-radius: 8px;
+  outline: none;
+}
+
+.chartWrap:focus-visible {
+  box-shadow: 0 0 0 3px rgba(40, 113, 91, 0.16);
+}
+
+.chartWrap.isUpdating svg {
+  opacity: 0.7;
+  transition: opacity 0.16s ease;
+}
+
+.chartWrapEmpty {
+  display: grid;
+  align-items: center;
+}
+
+.chartUpdateBadge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 4px 12px rgba(28, 42, 52, 0.1);
+  color: #50606b;
+  font-size: 0.68rem;
+  font-weight: 800;
+  pointer-events: none;
 }
 
 .chartWrap svg {
@@ -1997,6 +2251,7 @@ button[type="submit"] {
 
 .pieBlock {
   display: grid;
+  gap: 12px;
   justify-items: center;
 }
 
@@ -2053,6 +2308,115 @@ button[type="submit"] {
 .pieChart text:first-of-type {
   fill: #697783;
   font-size: 0.62rem;
+}
+
+.allocationSubChart {
+  display: grid;
+  width: 100%;
+  max-width: 248px;
+  gap: 8px;
+  border: 1px solid var(--neutral-200);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-subtle);
+}
+
+.allocationSubHeader {
+  display: grid;
+  gap: 2px;
+}
+
+.allocationSubHeader strong {
+  color: var(--neutral-900);
+  font-size: 0.82rem;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+}
+
+.allocationSubHeader span {
+  color: var(--neutral-600);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.allocationSubBody {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.subPieChart {
+  width: 82px;
+  height: 82px;
+}
+
+.subPieChart circle {
+  fill: none;
+  stroke-width: 14;
+  transform: rotate(-90deg);
+  transform-origin: 48px 48px;
+}
+
+.subPieChart .pieBase {
+  stroke: #edf1f4;
+}
+
+.subPieChart text {
+  pointer-events: none;
+  fill: #172026;
+  font-size: 0.66rem;
+  font-weight: 900;
+}
+
+.subPieChart text:first-of-type {
+  fill: #697783;
+  font-size: 0.58rem;
+}
+
+.allocationSubLegend {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 5px;
+}
+
+.allocationSubLegend div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: start;
+  color: var(--neutral-700);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.allocationSubLegend span {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.allocationSubLegend i {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 999px;
+}
+
+.allocationSubLegend strong {
+  min-width: 0;
+  overflow: visible;
+  color: var(--neutral-900);
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.allocationSubLegend b {
+  flex: 0 0 auto;
+  color: var(--neutral-900);
 }
 
 .pieLegend {
@@ -2189,6 +2553,7 @@ button[type="submit"] {
   grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
   gap: 8px 10px;
   align-items: stretch;
+  width: 100%;
   border: 1px solid var(--neutral-200);
   border-radius: 8px;
   padding: 9px 10px;
@@ -2196,6 +2561,7 @@ button[type="submit"] {
   color: var(--neutral-700);
   font-size: 0.8rem;
   font-weight: 800;
+  text-align: left;
 }
 
 .allocationDetailMain {
@@ -2209,10 +2575,22 @@ button[type="submit"] {
   font-size: 0.84rem;
 }
 
+.allocationDetailMain .gain {
+  font-size: 0.74rem;
+  line-height: 1.15;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 .allocationDetailStats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
+}
+
+.allocationDetailStats.compact {
+  grid-template-columns: minmax(0, 1.35fr) minmax(76px, 0.65fr);
 }
 
 .allocationDetailStats span {
@@ -2234,7 +2612,24 @@ button[type="submit"] {
   color: var(--neutral-900);
   font-size: 0.74rem;
   font-weight: 900;
-  white-space: nowrap;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.allocationValueStat b {
+  font-size: 0.86rem;
+}
+
+.allocationDetailStats.compact b {
+  overflow: visible;
+  white-space: normal;
+}
+
+.allocationDetailStats.compact span {
+  overflow: visible;
+  white-space: normal;
 }
 
 .allocationDetailEmpty {
@@ -2449,6 +2844,36 @@ textarea {
 
 .transactionMode .segmented button {
   flex: 1;
+}
+
+.sellQuantityControl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.sellQuantityControl input {
+  min-width: 0;
+}
+
+.sellQuantityControl button {
+  min-height: 44px;
+  border: 1px solid #d3dce3;
+  border-radius: 8px;
+  padding: 0 11px;
+  background: #fbfcfd;
+  color: #274257;
+  font-size: 0.82rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.sellQuantityControl button:hover,
+.sellQuantityControl button:focus,
+.sellQuantityControl button.active {
+  border-color: var(--primary);
+  background: #e9f0f5;
+  color: var(--primary);
 }
 
 .holdingSnapshot,
@@ -2851,6 +3276,10 @@ button:disabled {
   color: #0f7a58;
 }
 
+.gain.warning {
+  color: var(--warning);
+}
+
 .gain.negative,
 .errorText {
   color: #c24135;
@@ -2925,6 +3354,15 @@ button:disabled {
     min-height: 44px;
     padding-inline: 8px;
     font-size: 0.78rem;
+  }
+
+  .snapshotStatus {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .snapshotStatus time {
+    text-align: left;
   }
 
   .priorityMetrics {
@@ -3007,6 +3445,20 @@ button:disabled {
 
   .metric strong {
     font-size: 0.94rem;
+  }
+
+  .metricDetailHeader,
+  .metricDetailItem {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .metricDetailHeader > div:last-child,
+  .metricDetailItem > div {
+    justify-items: start;
+  }
+
+  .metricDetailItem small {
+    white-space: normal;
   }
 
   .simulationHero,
@@ -3252,8 +3704,16 @@ button:disabled {
     font-size: 0.68rem;
   }
 
+  .allocationValueStat b {
+    font-size: 0.78rem;
+  }
+
   .allocationDetailMain strong {
     font-size: 0.82rem;
+  }
+
+  .allocationSubChart {
+    max-width: none;
   }
 
   .pieLegend {

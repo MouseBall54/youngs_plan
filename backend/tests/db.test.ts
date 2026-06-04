@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { buildProjectionHistory, mergeHistoryPoints } from "../src/valuation.js";
+import { buildProjectionHistory, mergeHistoryPoints, summarizeByDate } from "../src/valuation.js";
 
 let db: typeof import("../src/db.js");
 let databaseUrl: string;
@@ -30,6 +30,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.pool.query(
      `TRUNCATE
+       dashboard_snapshots,
        simulation_incomes,
        asset_transaction_cash_links,
        asset_transaction_lots,
@@ -305,6 +306,26 @@ describe("history and price persistence", () => {
     });
     expect(await db.deleteSimulationIncome(created.id)).toBe(true);
     expect(await db.listSimulationIncomes()).toHaveLength(0);
+  });
+
+  it("stores and returns the latest dashboard snapshot for a target date", async () => {
+    const account = await db.createAccount({ name: "Brokerage" });
+    await db.createAsset(assetInput(account.id, { name: "Cash", valuationDate: "2026-01-01", currentValue: 1000 }));
+    const assets = await db.listAssets();
+    const payload = {
+      accounts: await db.listAccounts(),
+      summary: summarizeByDate(assets, "2026-01-01"),
+      positions: await db.listPositions("2026-01-01"),
+      history: [],
+      transactions: await db.listTransactions()
+    };
+
+    await db.saveDashboardSnapshot("2026-01-01", payload);
+    const snapshot = await db.getDashboardSnapshot("2026-01-01");
+
+    expect(snapshot?.targetDate).toBe("2026-01-01");
+    expect(snapshot?.payload.summary.totalValueKrw).toBe(1000);
+    expect(snapshot?.payload.accounts[0].name).toBe("Brokerage");
   });
 
   it("does not return partial stored history as a full portfolio point", async () => {

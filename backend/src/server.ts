@@ -11,6 +11,7 @@ import {
   deleteAsset,
   deleteSimulationIncome,
   deleteTransaction,
+  getDashboardSnapshot,
   listAssetQuantityHistory,
   listAssetPriceHistory,
   listAccounts,
@@ -25,6 +26,7 @@ import {
   listTransactions,
   markAssetPriceError,
   processMaturedBonds,
+  saveDashboardSnapshot,
   transactionTotalsByDate,
   transactionTotalsUntil,
   updateAccount,
@@ -36,6 +38,7 @@ import {
   upsertFxRateHistory
 } from "./db.js";
 import { fetchHistoricalQuotes, fetchLatestQuote, fetchUsdKrwHistory, fetchUsdKrwRate, searchTickers } from "./price.js";
+import type { DashboardData } from "./types.js";
 import { buildProjectionHistory, effectiveLiquidFrom, mergeHistoryPoints, summarizeByDate, valueAssetsForDate } from "./valuation.js";
 
 const app = express();
@@ -179,6 +182,36 @@ const simulationIncomeSchema = z
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/api/dashboard/snapshot", async (req, res, next) => {
+  try {
+    const targetDate = String(req.query.date ?? today());
+    const snapshot = await getDashboardSnapshot(targetDate);
+    if (!snapshot) {
+      res.status(204).send();
+      return;
+    }
+
+    res.json({
+      date: snapshot.targetDate,
+      ...snapshot.payload,
+      syncedAt: snapshot.syncedAt,
+      isSnapshot: true
+    } satisfies DashboardData);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/dashboard", async (req, res, next) => {
+  try {
+    const targetDate = String(req.query.date ?? today());
+    const data = await buildDashboardData(targetDate);
+    res.json(await saveDashboardDataSnapshot(data));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/accounts", async (_req, res, next) => {
@@ -387,42 +420,7 @@ app.get("/api/history", async (req, res, next) => {
   try {
     const targetDate = String(req.query.date ?? today());
     const range = historyRangeSchema.parse(req.query.range ?? "1m");
-    await processMaturedBonds(maturityProcessDate(targetDate));
-    const currentAssets = await listAssets();
-    const preliminaryWindow = historyWindow(currentAssets, targetDate, range);
-    const assets = await listAssetsForHistory(preliminaryWindow.endDate);
-    const rangeWindow = historyWindow(assets, targetDate, range);
-    const startDate = rangeWindow.startDate;
-    const dailyIncome = await transactionTotalsByDate(startDate, rangeWindow.endDate);
-    const initialIncome = await transactionTotalsUntil(shiftDate(startDate, -1));
-    const incomesByDate = Object.fromEntries(
-      dailyIncome.map((item) => [item.date, { realizedGainKrw: item.realizedGainKrw, dividendIncomeKrw: item.dividendIncomeKrw }])
-    );
-    const tickerKeys = uniqueTickerKeys(assets);
-    const [priceHistory, fxHistory, quantityHistory] = await Promise.all([
-      listAssetPriceHistory(startDate, rangeWindow.endDate, tickerKeys),
-      assets.some((asset) => asset.currency === "USD" || asset.market === "us")
-        ? listFxRateHistory("USD", "KRW", startDate, rangeWindow.endDate)
-        : Promise.resolve([]),
-      listAssetQuantityHistory(assets.map((asset) => asset.id))
-    ]);
-    const projection = buildProjectionHistory(assets, rangeWindow.endDate, rangeWindow.days, incomesByDate, initialIncome, {
-      prices: priceHistory,
-      fxRates: fxHistory,
-      quantities: quantityHistory
-    });
-    const stored = await listStoredHistory(
-      projection[0]?.date ?? rangeWindow.startDate,
-      rangeWindow.endDate,
-      assets.map((asset) => asset.id)
-    );
-
-    res.json({
-      range,
-      startDate: projection[0]?.date ?? rangeWindow.startDate,
-      endDate: rangeWindow.endDate,
-      points: mergeHistoryPoints(projection, stored)
-    });
+    res.json(await buildHistoryResponse(targetDate, range));
   } catch (error) {
     next(error);
   }
@@ -472,6 +470,10 @@ app.post("/api/prices/refresh", async (_req, res, next) => {
           message
         });
       }
+    }
+
+    if (results.some((result) => result.ok)) {
+      await saveDashboardDataSnapshot(await buildDashboardData(today()));
     }
 
     res.json({ updatedAt: new Date().toISOString(), results });
@@ -587,6 +589,91 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 app.listen(port, () => {
   console.log(`Backend listening on http://localhost:${port}`);
 });
+
+async function buildDashboardData(targetDate: string): Promise<DashboardData> {
+  await processMaturedBonds(maturityProcessDate(targetDate));
+  const [accounts, assets, income, positions, history, transactions] = await Promise.all([
+    listAccounts(),
+    listAssets(),
+    transactionTotalsUntil(targetDate),
+    listPositions(targetDate),
+    buildHistoryResponse(targetDate, "all", { processMaturity: false }),
+    listTransactions()
+  ]);
+
+  return {
+    date: targetDate,
+    accounts,
+    summary: summarizeByDate(assets, targetDate, income),
+    positions,
+    history: history.points,
+    transactions,
+    syncedAt: new Date().toISOString(),
+    isSnapshot: false
+  };
+}
+
+async function saveDashboardDataSnapshot(data: DashboardData): Promise<DashboardData> {
+  const snapshot = await saveDashboardSnapshot(data.date, {
+    accounts: data.accounts,
+    summary: data.summary,
+    positions: data.positions,
+    history: data.history,
+    transactions: data.transactions
+  });
+
+  return {
+    ...data,
+    syncedAt: snapshot.syncedAt,
+    isSnapshot: false
+  };
+}
+
+async function buildHistoryResponse(
+  targetDate: string,
+  range: z.infer<typeof historyRangeSchema>,
+  options: { processMaturity?: boolean } = {}
+) {
+  if (options.processMaturity !== false) {
+    await processMaturedBonds(maturityProcessDate(targetDate));
+  }
+
+  const currentAssets = await listAssets();
+  const preliminaryWindow = historyWindow(currentAssets, targetDate, range);
+  const assets = await listAssetsForHistory(preliminaryWindow.endDate);
+  const rangeWindow = historyWindow(assets, targetDate, range);
+  const startDate = rangeWindow.startDate;
+  const dailyIncome = await transactionTotalsByDate(startDate, rangeWindow.endDate);
+  const initialIncome = await transactionTotalsUntil(shiftDate(startDate, -1));
+  const incomesByDate = Object.fromEntries(
+    dailyIncome.map((item) => [item.date, { realizedGainKrw: item.realizedGainKrw, dividendIncomeKrw: item.dividendIncomeKrw }])
+  );
+  const tickerKeys = uniqueTickerKeys(assets);
+  const [priceHistory, fxHistory, quantityHistory] = await Promise.all([
+    listAssetPriceHistory(startDate, rangeWindow.endDate, tickerKeys),
+    assets.some((asset) => asset.currency === "USD" || asset.market === "us")
+      ? listFxRateHistory("USD", "KRW", startDate, rangeWindow.endDate)
+      : Promise.resolve([]),
+    listAssetQuantityHistory(assets.map((asset) => asset.id))
+  ]);
+  const projection = buildProjectionHistory(assets, rangeWindow.endDate, rangeWindow.days, incomesByDate, initialIncome, {
+    prices: priceHistory,
+    fxRates: fxHistory,
+    quantities: quantityHistory
+  });
+  const stored = await listStoredHistory(
+    projection[0]?.date ?? rangeWindow.startDate,
+    rangeWindow.endDate,
+    assets.map((asset) => asset.id)
+  );
+
+  return {
+    range,
+    startDate: projection[0]?.date ?? rangeWindow.startDate,
+    endDate: rangeWindow.endDate,
+    points: mergeHistoryPoints(projection, stored)
+  };
+}
 
 function today() {
   return new Date().toISOString().slice(0, 10);

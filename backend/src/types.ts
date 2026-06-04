@@ -202,3 +202,17 @@ export type TickerSearchResult = {
   market: AssetMarket;
   currency: string;
 };
+
+export type DashboardSnapshotPayload = {
+  accounts: Account[];
+  summary: Summary;
+  positions: AssetPosition[];
+  history: HistoryPoint[];
+  transactions: AssetTransaction[];
+};
+
+export type DashboardData = DashboardSnapshotPayload & {
+  date: string;
+  syncedAt: string;
+  isSnapshot: boolean;
+};

@@ -1,4 +1,4 @@
-import { FormEvent, PointerEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, memo, PointerEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -28,12 +28,9 @@ import {
   deleteAsset,
   deleteSimulationIncome,
   deleteTransaction,
+  fetchDashboard,
+  fetchDashboardSnapshot,
   fetchSimulationIncomes,
-  fetchPositions,
-  fetchTransactions,
-  fetchAccounts,
-  fetchHistory,
-  fetchSummary,
   fetchUsdKrwRate,
   refreshPriceHistory,
   refreshPrices,
@@ -43,6 +40,14 @@ import {
   updateSimulationIncome,
   updateTransaction
 } from "./api";
+import {
+  assetSaleRestrictionFormState,
+  hasSaleRestrictionFormChanged,
+  liquidFromForSaleRestrictionForm,
+  liquidFromForSaleRestrictionLot
+} from "./assetFormState";
+import { groupedDividendIncomeRows, groupedUnrealizedGainRows } from "./metricDetailGroups";
+import { groupSimulationPointsByMonth, simulationAssetAvailability, simulationAssetState } from "./simulation";
 import type {
   Account,
   AssetPosition,
@@ -51,6 +56,7 @@ import type {
   AssetType,
   AssetValuation,
   BreakdownItem,
+  DashboardData,
   HistoryPoint,
   PriceSource,
   SimulationAvailability,
@@ -84,6 +90,8 @@ const rangeLabels: Record<string, string> = {
   "1y": "1년",
   all: "전체"
 };
+
+const historyCacheKey = (date: string, range: string) => `${date}:${range}`;
 
 const transactionLabels: Record<TransactionType, string> = {
   buy: "매수",
@@ -157,6 +165,7 @@ type SimulationAssetRow = {
 };
 
 type SimulationLockedItem = {
+  key: string;
   id: string;
   name: string;
   accountName: string | null;
@@ -175,6 +184,8 @@ type SimulationPointDetail = {
 
 type SimulationPoint = {
   date: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
   totalValueKrw: number;
   liquidValueKrw: number;
   lockedValueKrw: number;
@@ -191,6 +202,37 @@ type SimulationResult = {
   startingAssetsKrw: number;
   cumulativeIncomeKrw: number;
   assetRows: SimulationAssetRow[];
+};
+
+type DashboardIncomePeriodRow = {
+  label: string;
+  date: string | null;
+  valueKrw: number | null;
+  deltaKrw: number | null;
+  rate: number | null;
+};
+
+type MetricDetailFormat = "money" | "signed";
+
+type MetricDetailRow = {
+  id: string;
+  label: string;
+  meta: string;
+  amountKrw: number;
+  rateText?: string;
+  tone?: "neutral" | "positive" | "negative" | "warning";
+};
+
+type MetricDetail = {
+  key: string;
+  title: string;
+  totalKrw: number;
+  basisDate: string;
+  format: MetricDetailFormat;
+  rows: MetricDetailRow[];
+  emptyText: string;
+  note?: string;
+  groupRowsByTone?: boolean;
 };
 
 type AssetForm = {
@@ -295,8 +337,11 @@ export function App() {
   const [targetDate, setTargetDate] = useState(today);
   const [range, setRange] = useState("1m");
   const [trendView, setTrendView] = useState("chart");
+  const [isHistoryUpdating, setIsHistoryUpdating] = useState(true);
   const [status, setStatus] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [dashboardSyncedAt, setDashboardSyncedAt] = useState<string | null>(null);
+  const [isUsingSnapshot, setIsUsingSnapshot] = useState(false);
   const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [isSavingAsset, setIsSavingAsset] = useState(false);
   const [isRefreshingPrices, setIsRefreshingPrices] = useState(false);
@@ -320,9 +365,20 @@ export function App() {
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
   const [editingAssetLotIds, setEditingAssetLotIds] = useState<string[]>([]);
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
+  const [tradePanelFocusRequest, setTradePanelFocusRequest] = useState(0);
+  const [activeOverviewMetric, setActiveOverviewMetric] = useState<string | null>(null);
   const [tickerResults, setTickerResults] = useState<TickerSearchResult[]>([]);
   const [accountForm, setAccountForm] = useState<AccountForm>(emptyAccountForm());
   const [assetForm, setAssetForm] = useState<AssetForm>(emptyAssetForm);
+  const tradePanelRef = useRef<HTMLElement | null>(null);
+  const historyCacheRef = useRef(new Map<string, HistoryPoint[]>());
+  const activeHistoryKeyRef = useRef(historyCacheKey(today, "1m"));
+  const fullHistoryRef = useRef<HistoryPoint[]>([]);
+  const fullHistoryDateRef = useRef(today);
+  const isFullHistoryLoadedRef = useRef(false);
+  const historyRequestIdRef = useRef(0);
+  const hasAutoRefreshedPricesRef = useRef(false);
+  const isPriceRefreshInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!feedback) return;
@@ -338,35 +394,154 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [status]);
 
+  useEffect(() => {
+    if (!tradePanelFocusRequest || tab !== "assets" || !isTradePanelOpen) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const panel = tradePanelRef.current;
+      if (!panel) return;
+
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      const focusTarget =
+        panel.querySelector<HTMLElement>(".assetForm input:not([disabled]), .assetForm select:not([disabled]), .assetForm textarea:not([disabled])") ??
+        panel.querySelector<HTMLElement>(".assetForm button:not([disabled])");
+      focusTarget?.focus({ preventScroll: true });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [isTradePanelOpen, tab, tradePanelFocusRequest]);
+
+  function requestTradePanelFocus() {
+    setTradePanelFocusRequest((request) => request + 1);
+  }
+
+  function toggleOverviewMetric(metricKey: string) {
+    setActiveOverviewMetric((current) => (current === metricKey ? null : metricKey));
+  }
+
   async function load(preferredAccountId?: string) {
+    const requestedDate = targetDate;
+    const requestedRange = range;
+    const requestedHistoryKey = historyCacheKey(requestedDate, requestedRange);
+    const requestId = ++historyRequestIdRef.current;
+    let snapshotApplied = false;
+
     try {
       setStatus("");
-      const [nextAccounts, nextSummary, nextPositions, nextHistory, nextComparisonHistory, nextTransactions] = await Promise.all([
-        fetchAccounts(),
-        fetchSummary(targetDate),
-        fetchPositions(targetDate),
-        fetchHistory(targetDate, range),
-        fetchHistory(targetDate, "all"),
-        fetchTransactions()
-      ]);
-      setAccounts(nextAccounts);
-      setSummary(nextSummary);
-      setPositions(nextPositions);
-      setHistory(nextHistory.points);
-      setComparisonHistory(nextComparisonHistory.points);
-      setTransactions(nextTransactions);
-      setAssetForm((current) => ({
-        ...current,
-        accountId: preferredAccountId ?? current.accountId
-      }));
+      setIsHistoryUpdating(true);
+      historyCacheRef.current.clear();
+      fullHistoryRef.current = [];
+      isFullHistoryLoadedRef.current = false;
+      activeHistoryKeyRef.current = requestedHistoryKey;
+      const latestDataPromise: Promise<{ data: DashboardData } | { error: unknown }> = fetchDashboard(requestedDate)
+        .then((data) => ({ data }))
+        .catch((error: unknown) => ({ error }));
+
+      const snapshot = await fetchDashboardSnapshot(requestedDate).catch(() => null);
+      if (snapshot) {
+        snapshotApplied = applyDashboardData(snapshot, preferredAccountId, requestedDate, requestId);
+      }
+
+      const latestDataResult = await latestDataPromise;
+      if ("error" in latestDataResult) {
+        throw latestDataResult.error;
+      }
+
+      const latestApplied = applyDashboardData(latestDataResult.data, preferredAccountId, requestedDate, requestId);
+      if (latestApplied) {
+        void refreshPricesAfterInitialLoad(latestDataResult.data, requestedDate, requestId, preferredAccountId);
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "데이터를 불러오지 못했습니다.");
+      const message = error instanceof Error ? error.message : "데이터를 불러오지 못했습니다.";
+      setStatus(snapshotApplied ? `최신 데이터 갱신 실패: ${message}` : message);
+    } finally {
+      if (historyRequestIdRef.current === requestId && activeHistoryKeyRef.current.startsWith(`${requestedDate}:`)) {
+        setIsHistoryUpdating(false);
+      }
+    }
+  }
+
+  function applyDashboardData(data: DashboardData, preferredAccountId: string | undefined, requestedDate: string, requestId: number) {
+    if (historyRequestIdRef.current !== requestId || !activeHistoryKeyRef.current.startsWith(`${requestedDate}:`)) {
+      return false;
+    }
+
+    historyCacheRef.current.clear();
+    fullHistoryRef.current = data.history;
+    fullHistoryDateRef.current = data.date;
+    isFullHistoryLoadedRef.current = true;
+    historyCacheRef.current.set(historyCacheKey(data.date, "all"), data.history);
+    setAccounts(data.accounts);
+    setSummary(data.summary);
+    setPositions(data.positions);
+    const activeRange = activeHistoryKeyRef.current.slice(data.date.length + 1);
+    setHistory(historyForRange(data.date, activeRange, data.history));
+    setComparisonHistory(data.history);
+    setTransactions(data.transactions);
+    setDashboardSyncedAt(data.syncedAt);
+    setIsUsingSnapshot(data.isSnapshot);
+    setAssetForm((current) => ({
+      ...current,
+      accountId: preferredAccountId ?? current.accountId
+    }));
+    return true;
+  }
+
+  async function refreshPricesAfterInitialLoad(
+    data: DashboardData,
+    requestedDate: string,
+    requestId: number,
+    preferredAccountId?: string
+  ) {
+    if (hasAutoRefreshedPricesRef.current || requestedDate !== today || !data.summary.assets.some((asset) => asset.ticker)) {
+      return;
+    }
+
+    hasAutoRefreshedPricesRef.current = true;
+
+    try {
+      await refreshCurrentPrices({ requestedDate, requestId, preferredAccountId, silent: true });
+    } catch {
+      // 스냅샷과 최신 DB 데이터는 이미 표시되어 있으므로 자동 현재가 갱신 실패는 화면을 비우지 않습니다.
     }
   }
 
   useEffect(() => {
     void load();
-  }, [targetDate, range]);
+  }, [targetDate]);
+
+  function historyForRange(date: string, nextRange: string, sourceHistory: HistoryPoint[]) {
+    const key = historyCacheKey(date, nextRange);
+    const cachedHistory = historyCacheRef.current.get(key);
+    if (cachedHistory) return cachedHistory;
+
+    const nextHistory = historyPointsForRange(sourceHistory, date, nextRange);
+    historyCacheRef.current.set(key, nextHistory);
+    return nextHistory;
+  }
+
+  function showHistoryRange(nextRange: string) {
+    activeHistoryKeyRef.current = historyCacheKey(targetDate, nextRange);
+    if (fullHistoryDateRef.current !== targetDate || !isFullHistoryLoadedRef.current) {
+      setIsHistoryUpdating(true);
+      return;
+    }
+
+    setHistory(historyForRange(targetDate, nextRange, fullHistoryRef.current));
+    setIsHistoryUpdating(false);
+  }
+
+  function changeRange(nextRange: string) {
+    if (nextRange === range) return;
+    setRange(nextRange);
+    showHistoryRange(nextRange);
+  }
+
+  function changeTargetDate(nextDate: string) {
+    activeHistoryKeyRef.current = historyCacheKey(nextDate, range);
+    setIsHistoryUpdating(true);
+    setTargetDate(nextDate);
+  }
 
   useEffect(() => {
     if (transactionMode !== "buy" || tab !== "assets" || assetForm.name.trim().length < 2) {
@@ -455,6 +630,11 @@ export function App() {
     () => buildSimulation(summary?.assets ?? [], simulationIncomes, accounts, today, simulationEndDate),
     [summary, simulationIncomes, accounts, simulationEndDate]
   );
+  const overviewMetricDetails = useMemo(
+    () => (summary ? buildSummaryMetricDetails(summary, transactions, targetDate) : new Map<string, MetricDetail>()),
+    [summary, transactions, targetDate]
+  );
+  const activeOverviewDetail = activeOverviewMetric ? overviewMetricDetails.get(activeOverviewMetric) ?? null : null;
 
   useEffect(() => {
     writeSimulationStorage({
@@ -571,19 +751,54 @@ export function App() {
   }
 
   async function updateTickerPrices() {
+    await refreshCurrentPrices({
+      requestedDate: targetDate,
+      requestId: historyRequestIdRef.current,
+      silent: false
+    });
+  }
+
+  async function refreshCurrentPrices({
+    requestedDate,
+    requestId,
+    preferredAccountId,
+    silent
+  }: {
+    requestedDate: string;
+    requestId: number;
+    preferredAccountId?: string;
+    silent: boolean;
+  }) {
+    if (isPriceRefreshInFlightRef.current) {
+      return;
+    }
+
+    isPriceRefreshInFlightRef.current = true;
     try {
       setStatus("");
-      setFeedback("현재가 갱신 중입니다.");
+      if (!silent) {
+        setFeedback("현재가 갱신 중입니다.");
+      }
       setIsRefreshingPrices(true);
       const result = await refreshPrices();
       const successCount = result.results.filter((item) => item.ok).length;
       const failCount = result.results.length - successCount;
       const failedText = summarizePriceRefreshFailures(result.results);
-      setFeedback(`현재가 갱신 완료: 성공 ${successCount}개${failCount ? `, 실패 ${failCount}개${failedText}` : ""}`);
-      await load();
+      if (!silent) {
+        setFeedback(`현재가 갱신 완료: 성공 ${successCount}개${failCount ? `, 실패 ${failCount}개${failedText}` : ""}`);
+      }
+      if (successCount > 0) {
+        const refreshedDashboard = await fetchDashboard(requestedDate);
+        applyDashboardData(refreshedDashboard, preferredAccountId, requestedDate, requestId);
+      }
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "현재가를 갱신하지 못했습니다.");
+      if (!silent) {
+        setStatus(error instanceof Error ? error.message : "현재가를 갱신하지 못했습니다.");
+        return;
+      }
+      throw error;
     } finally {
+      isPriceRefreshInFlightRef.current = false;
       setIsRefreshingPrices(false);
     }
   }
@@ -665,12 +880,15 @@ export function App() {
   }
 
   function startAssetEdit(asset: AssetValuation) {
+    const lotIds = asset.lotIds ?? [asset.id];
+    const lots = (summary?.assets ?? []).filter((item) => lotIds.includes(item.id));
     setEditingAssetId(asset.id);
-    setEditingAssetLotIds(asset.lotIds ?? [asset.id]);
+    setEditingAssetLotIds(lotIds);
     setEditingTransactionId(null);
-    setAssetForm(formFromAsset(asset));
+    setAssetForm(formFromAsset(asset, lots.length > 0 ? lots : [asset]));
     setIsTradePanelOpen(true);
     setTab("assets");
+    requestTradePanelFocus();
   }
 
   async function updateAggregateAssetLinkage() {
@@ -679,9 +897,9 @@ export function App() {
       throw new Error("합산 자산의 개별 lot 정보를 찾지 못했습니다.");
     }
 
-    await Promise.all(
-      lots.map((asset) => updateAsset(asset.id, assetLinkagePayload(asset, assetForm)))
-    );
+    const updateSaleRestriction = hasSaleRestrictionFormChanged(lots, assetForm);
+
+    await Promise.all(lots.map((asset) => updateAsset(asset.id, assetLinkagePayload(asset, assetForm, updateSaleRestriction))));
   }
 
   function startTransactionEdit(transaction: AssetTransaction) {
@@ -697,10 +915,11 @@ export function App() {
     setEditingAssetLotIds([]);
     setEditingTransactionId(transaction.id);
     setTransactionMode(transaction.transactionType);
-    setAssetForm(formFromTransaction(transaction, positions, accounts));
+    setAssetForm(formFromTransaction(transaction, positions, accounts, summary?.assets ?? []));
     setTickerResults([]);
     setIsTradePanelOpen(true);
     setTab("assets");
+    requestTradePanelFocus();
   }
 
   async function removeTransaction(transaction: AssetTransaction) {
@@ -920,7 +1139,7 @@ export function App() {
             name="targetDate"
             type="date"
             value={targetDate}
-            onChange={(event) => setTargetDate(event.target.value)}
+            onChange={(event) => changeTargetDate(event.target.value)}
           />
         </label>
         <button
@@ -947,6 +1166,12 @@ export function App() {
 
       {status && <Notice message={status} onDismiss={() => setStatus("")} />}
       {feedback && <Notice message={feedback} tone="success" onDismiss={() => setFeedback("")} />}
+      {dashboardSyncedAt && (
+        <div className={isUsingSnapshot ? "snapshotStatus" : "snapshotStatus live"} role="status">
+          <span>{isUsingSnapshot ? "최근 저장 데이터 표시 중" : "최신 데이터 표시 중"}</span>
+          <time dateTime={dashboardSyncedAt}>마지막 갱신 {formatDisplayDateTime(dashboardSyncedAt)}</time>
+        </div>
+      )}
 
       {tab === "overview" && (
         <>
@@ -985,6 +1210,8 @@ export function App() {
               icon={<CircleDollarSign />}
               tone="positive"
               priority="high"
+              selected={Boolean(summary && activeOverviewMetric === "liquid")}
+              onClick={summary ? () => toggleOverviewMetric("liquid") : undefined}
             />
             <Metric
               title="제한 자산"
@@ -993,6 +1220,8 @@ export function App() {
               icon={<Landmark />}
               tone="warning"
               priority="high"
+              selected={Boolean(summary && activeOverviewMetric === "locked")}
+              onClick={summary ? () => toggleOverviewMetric("locked") : undefined}
             />
             <Metric
               title="총수익"
@@ -1001,15 +1230,40 @@ export function App() {
               icon={<LineChart />}
               tone={(summary?.totalIncomeKrw ?? summary?.totalGainKrw ?? 0) >= 0 ? "positive" : "negative"}
               priority="high"
+              selected={Boolean(summary && activeOverviewMetric === "total-income")}
+              onClick={summary ? () => toggleOverviewMetric("total-income") : undefined}
             />
           </section>
 
           <section className="secondaryMetrics" aria-label="보조 자산 지표">
             <Metric title="원금" value={compactKrw(summary?.totalCostKrw ?? 0)} icon={<WalletCards />} />
-            <Metric title="평가손익" value={compactSignedKrw(summary?.unrealizedGainKrw ?? 0)} icon={<LineChart />} tone={(summary?.unrealizedGainKrw ?? 0) >= 0 ? "positive" : "negative"} />
-            <Metric title="차익실현" value={compactSignedKrw(summary?.realizedGainKrw ?? 0)} icon={<Banknote />} tone={(summary?.realizedGainKrw ?? 0) >= 0 ? "positive" : "negative"} />
-            <Metric title="배당수익" value={compactSignedKrw(summary?.dividendIncomeKrw ?? 0)} icon={<CircleDollarSign />} tone="positive" />
+            <Metric
+              title="평가손익"
+              value={compactSignedKrw(summary?.unrealizedGainKrw ?? 0)}
+              icon={<LineChart />}
+              tone={(summary?.unrealizedGainKrw ?? 0) >= 0 ? "positive" : "negative"}
+              selected={Boolean(summary && activeOverviewMetric === "unrealized")}
+              onClick={summary ? () => toggleOverviewMetric("unrealized") : undefined}
+            />
+            <Metric
+              title="차익실현"
+              value={compactSignedKrw(summary?.realizedGainKrw ?? 0)}
+              icon={<Banknote />}
+              tone={(summary?.realizedGainKrw ?? 0) >= 0 ? "positive" : "negative"}
+              selected={Boolean(summary && activeOverviewMetric === "realized")}
+              onClick={summary ? () => toggleOverviewMetric("realized") : undefined}
+            />
+            <Metric
+              title="배당수익"
+              value={compactSignedKrw(summary?.dividendIncomeKrw ?? 0)}
+              icon={<CircleDollarSign />}
+              tone="positive"
+              selected={Boolean(summary && activeOverviewMetric === "dividend")}
+              onClick={summary ? () => toggleOverviewMetric("dividend") : undefined}
+            />
           </section>
+
+          {activeOverviewDetail && <MetricDetailPanel detail={activeOverviewDetail} onClose={() => setActiveOverviewMetric(null)} />}
 
           {problemAssets.length > 0 && (
             <section className="riskPanel" aria-label="확인 필요한 자산">
@@ -1039,11 +1293,11 @@ export function App() {
               </div>
               <div className="sectionControls">
                 <Segmented options={{ chart: "그래프", table: "테이블" }} value={trendView} onChange={setTrendView} />
-                <Segmented options={rangeLabels} value={range} onChange={setRange} />
+                <Segmented options={rangeLabels} value={range} onChange={changeRange} />
               </div>
             </div>
             {trendView === "chart" ? (
-              <TimelineChart points={history} />
+              <TimelineChart points={history} isUpdating={isHistoryUpdating} />
             ) : (
               <LiquidityReleaseTable assets={summary?.assets ?? []} points={history} />
             )}
@@ -1126,7 +1380,7 @@ export function App() {
               </button>
             </div>
             {isTradePanelOpen && (
-              <section className="panel tradeEntryPanel">
+              <section className="panel tradeEntryPanel" ref={tradePanelRef}>
                 <div className="sectionHeader">
                   <div>
                     <h2>{editingAssetId || editingTransactionId ? "거래 수정" : "거래 등록"}</h2>
@@ -1367,6 +1621,14 @@ function ComparisonDashboardView({
   simulationResult: SimulationResult;
   targetDate: string;
 }) {
+  const [activeInsightMetric, setActiveInsightMetric] = useState<string | null>(null);
+  const insightMetricDetails = useMemo(
+    () => (summary ? buildSummaryMetricDetails(summary, transactions, targetDate) : new Map<string, MetricDetail>()),
+    [summary, transactions, targetDate]
+  );
+  const activeInsightDetail = activeInsightMetric ? insightMetricDetails.get(activeInsightMetric) ?? null : null;
+  const toggleInsightMetric = (metricKey: string) => setActiveInsightMetric((current) => (current === metricKey ? null : metricKey));
+
   if (!summary) {
     return (
       <section className="insightDashboard">
@@ -1416,6 +1678,7 @@ function ComparisonDashboardView({
   const previousPoint = previousHistoryPoint(history, targetDate);
   const recentDelta = previousPoint ? summary.totalValueKrw - previousPoint.totalValueKrw : null;
   const periodRows = dashboardPeriodRows(summary, history, targetDate);
+  const incomePeriodRows = dashboardIncomePeriodRows(summary, history, targetDate);
   const insights = dashboardRiskInsights(summary, topAssets, accountRows, bottomPerformers, history, targetDate);
   const transactionFlow = buildTransactionFlow(transactions);
   const futureLiquidDelta = simulationResult.finalPoint.liquidValueKrw - summary.liquidValueKrw;
@@ -1451,8 +1714,24 @@ function ComparisonDashboardView({
       </section>
 
       <section className="insightKpiGrid" aria-label="비교 핵심 지표">
-        <Metric title="총자산" value={compactKrw(summary.totalValueKrw)} detail={`기준일 ${formatDisplayDate(targetDate)}`} icon={<BarChart3 />} priority="high" />
-        <Metric title="총 원금" value={compactKrw(summary.totalCostKrw)} detail="보유 원가 기준" icon={<WalletCards />} priority="high" />
+        <Metric
+          title="총자산"
+          value={compactKrw(summary.totalValueKrw)}
+          detail={`기준일 ${formatDisplayDate(targetDate)}`}
+          icon={<BarChart3 />}
+          priority="high"
+          selected={activeInsightMetric === "total-assets"}
+          onClick={() => toggleInsightMetric("total-assets")}
+        />
+        <Metric
+          title="총 원금"
+          value={compactKrw(summary.totalCostKrw)}
+          detail="보유 원가 기준"
+          icon={<WalletCards />}
+          priority="high"
+          selected={activeInsightMetric === "total-cost"}
+          onClick={() => toggleInsightMetric("total-cost")}
+        />
         <Metric
           title="평가손익"
           value={compactSignedKrw(summary.unrealizedGainKrw)}
@@ -1460,6 +1739,8 @@ function ComparisonDashboardView({
           icon={<TrendingUp />}
           tone={summary.unrealizedGainKrw >= 0 ? "positive" : "negative"}
           priority="high"
+          selected={activeInsightMetric === "unrealized"}
+          onClick={() => toggleInsightMetric("unrealized")}
         />
         <Metric
           title="제한 금액"
@@ -1468,8 +1749,12 @@ function ComparisonDashboardView({
           icon={<Landmark />}
           tone="warning"
           priority="high"
+          selected={activeInsightMetric === "locked"}
+          onClick={() => toggleInsightMetric("locked")}
         />
       </section>
+
+      {activeInsightDetail && <MetricDetailPanel detail={activeInsightDetail} onClose={() => setActiveInsightMetric(null)} />}
 
       <section className="insightGrid">
         <article className="insightPanel wide">
@@ -1498,6 +1783,7 @@ function ComparisonDashboardView({
               share: item.share,
               detail: `수익률 ${formatPercent(item.gainRate)}`
             }))}
+            valueFormatter={formatKrwThousands}
           />
         </article>
 
@@ -1550,6 +1836,11 @@ function ComparisonDashboardView({
               </div>
             ))}
           </div>
+        </article>
+
+        <article className="insightPanel">
+          <PanelTitle icon={<TrendingUp />} title="수익 변동 비교" detail="저장된 히스토리의 총수익 기준" />
+          <DashboardIncomeChangeCompare rows={incomePeriodRows} />
         </article>
 
         <article className="insightPanel">
@@ -1675,7 +1966,13 @@ function DashboardStackBar({ rows, tone }: { rows: DashboardRankRow[]; tone?: "l
   );
 }
 
-function DashboardRankList({ rows }: { rows: DashboardRankRow[] }) {
+function DashboardRankList({
+  rows,
+  valueFormatter = formatKrw
+}: {
+  rows: DashboardRankRow[];
+  valueFormatter?: (value: number) => string;
+}) {
   const visibleRows = rows.filter((row) => row.valueKrw > 0);
 
   if (visibleRows.length === 0) {
@@ -1691,7 +1988,7 @@ function DashboardRankList({ rows }: { rows: DashboardRankRow[] }) {
               <i style={{ background: liquidityDashboardColor(row.key) || allocationColors[index % allocationColors.length] }} />
               <strong>{row.label}</strong>
             </span>
-            <b>{formatKrw(row.valueKrw)}</b>
+            <b>{valueFormatter(row.valueKrw)}</b>
           </div>
           <div className="dashboardRankMeta">
             <span>{row.detail ?? `전체 ${formatPercent(row.share)}`}</span>
@@ -1953,6 +2250,14 @@ function SimulationView({
   const assumptionSummary = buildSimulationAssumptionSummary(result.assetRows);
   const assumptionGroups = buildSimulationAssumptionGroups(result.assetRows);
   const accountById = new Map(accounts.map((account) => [account.id, account]));
+  const [activeSimulationMetric, setActiveSimulationMetric] = useState<string | null>(null);
+  const simulationMetricDetails = useMemo(
+    () => buildSimulationMetricDetails(result, incomes, accounts, today, endDate),
+    [result, incomes, accounts, endDate]
+  );
+  const activeSimulationDetail = activeSimulationMetric ? simulationMetricDetails.get(activeSimulationMetric) ?? null : null;
+  const toggleSimulationMetric = (metricKey: string) =>
+    setActiveSimulationMetric((current) => (current === metricKey ? null : metricKey));
 
   useEffect(() => {
     if (!result.points.some((point) => point.date === selectedSimulationDate)) {
@@ -2005,23 +2310,48 @@ function SimulationView({
       </section>
 
       <section className="simulationMetricGrid" aria-label="시뮬레이션 요약">
-        <Metric title="예상 총자산" value={compactKrw(finalPoint.totalValueKrw)} detail={`시작 대비 ${compactSignedKrw(finalDeltaKrw)}`} icon={<BarChart3 />} />
-        <Metric title="현금화 가능" value={compactKrw(finalPoint.liquidValueKrw)} icon={<CircleDollarSign />} tone="positive" />
+        <Metric
+          title="예상 총자산"
+          value={compactKrw(finalPoint.totalValueKrw)}
+          detail={`시작 대비 ${compactSignedKrw(finalDeltaKrw)}`}
+          icon={<BarChart3 />}
+          selected={activeSimulationMetric === "simulation-total"}
+          onClick={() => toggleSimulationMetric("simulation-total")}
+        />
+        <Metric
+          title="현금화 가능"
+          value={compactKrw(finalPoint.liquidValueKrw)}
+          icon={<CircleDollarSign />}
+          tone="positive"
+          selected={activeSimulationMetric === "simulation-liquid"}
+          onClick={() => toggleSimulationMetric("simulation-liquid")}
+        />
         <Metric
           title="제한 자산"
           value={compactKrw(finalPoint.lockedValueKrw)}
           detail={`계좌 ${compactKrw(finalPoint.accountLockedValueKrw)} · 자산 ${compactKrw(finalPoint.assetLockedValueKrw)}`}
           icon={<Landmark />}
           tone="warning"
+          selected={activeSimulationMetric === "simulation-locked"}
+          onClick={() => toggleSimulationMetric("simulation-locked")}
         />
-        <Metric title="누적 예상 수입" value={compactKrw(result.cumulativeIncomeKrw)} detail={`입력값 ${incomes.length}개`} icon={<Banknote />} />
+        <Metric
+          title="누적 예상 수입"
+          value={compactKrw(result.cumulativeIncomeKrw)}
+          detail={`입력값 ${incomes.length}개`}
+          icon={<Banknote />}
+          selected={activeSimulationMetric === "simulation-income"}
+          onClick={() => toggleSimulationMetric("simulation-income")}
+        />
       </section>
+
+      {activeSimulationDetail && <MetricDetailPanel detail={activeSimulationDetail} onClose={() => setActiveSimulationMetric(null)} />}
 
       <section className="panel simulationChartPanel">
         <div className="sectionHeader">
           <div>
             <h2>미래 추이</h2>
-            <span>현재 자산은 평가금액 고정, 제한 정보가 없으면 즉시 현금화 가능으로 계산합니다.</span>
+            <span>현재 자산은 평가금액 고정, 월별 기준에 수입일과 제한 해제일을 함께 반영합니다.</span>
           </div>
           <div className="sectionControls">
             <Segmented options={simulationRangeLabels} value={range} onChange={onRangeChange} />
@@ -2160,6 +2490,38 @@ function SimulationView({
   );
 }
 
+function DashboardIncomeChangeCompare({ rows }: { rows: DashboardIncomePeriodRow[] }) {
+  return (
+    <div className="periodCompareList">
+      {rows.map((row) => (
+        <div className="periodCompareRow" key={row.label}>
+          <span>
+            <strong>{row.label}</strong>
+            <small>
+              {row.date && row.valueKrw !== null
+                ? `${formatDisplayDate(row.date)} · 기준 ${compactSignedKrw(row.valueKrw)}`
+                : "데이터 부족"}
+            </small>
+          </span>
+          <b className={row.deltaKrw === null ? "" : gainClass(row.deltaKrw)}>
+            {row.deltaKrw === null ? "-" : compactSignedKrw(row.deltaKrw)}
+          </b>
+          <em className={row.deltaKrw === null ? "" : gainClass(row.deltaKrw)}>
+            {formatDashboardIncomeChangeRate(row)}
+          </em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatDashboardIncomeChangeRate(row: DashboardIncomePeriodRow) {
+  if (row.deltaKrw === null) return "비교 불가";
+  if (row.rate !== null) return formatPercent(row.rate);
+  if (row.valueKrw === 0 && row.deltaKrw > 0) return "신규 수익";
+  return "비율 불가";
+}
+
 function SimulationChart({
   points,
   selectedDate,
@@ -2169,6 +2531,7 @@ function SimulationChart({
   selectedDate: string;
   onSelectDate: (date: string) => void;
 }) {
+  const chartRef = useRef<HTMLDivElement | null>(null);
   const width = 340;
   const height = 180;
   const leftPadding = 46;
@@ -2187,17 +2550,28 @@ function SimulationChart({
   const toY = (value: number) => chartBottom - (value / maxValue) * (chartBottom - topPadding);
   const linePoints = (selector: (point: SimulationPoint) => number) =>
     points.map((point, index) => `${toX(index)},${toY(selector(point))}`).join(" ");
-  const activeIndex = Math.max(
-    0,
-    points.findIndex((point) => point.date === selectedDate)
-  );
+  const selectedIndex = points.findIndex((point) => point.date === selectedDate);
+  const activeIndex = selectedIndex >= 0 ? selectedIndex : Math.max(0, points.length - 1);
   const activePoint = points[activeIndex] ?? null;
   const activeX = activePoint ? toX(activeIndex) : 0;
   const labelX = activeX > width / 2 ? activeX - 123 : activeX + 8;
   const markerIndexes = visibleTimelineMarkerIndexes(points.length, activeIndex);
 
-  function selectPoint(event: PointerEvent<SVGSVGElement>) {
+  function moveSelectedPoint(delta: number) {
     if (points.length === 0) return;
+    const nextIndex = Math.max(0, Math.min(points.length - 1, activeIndex + delta));
+    onSelectDate(points[nextIndex].date);
+  }
+
+  function handleChartKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    moveSelectedPoint(event.key === "ArrowRight" ? 1 : -1);
+  }
+
+  function selectPoint(event: PointerEvent<SVGSVGElement>, shouldFocus = false) {
+    if (points.length === 0) return;
+    if (shouldFocus) chartRef.current?.focus({ preventScroll: true });
     const rect = event.currentTarget.getBoundingClientRect();
     const chartRight = width - rightPadding;
     const x = Math.max(leftPadding, Math.min(chartRight, ((event.clientX - rect.left) / rect.width) * width));
@@ -2210,12 +2584,19 @@ function SimulationChart({
   }
 
   return (
-    <div className="simulationChartWrap">
+    <div
+      ref={chartRef}
+      className="simulationChartWrap"
+      aria-label="시뮬레이션 미래 추이 그래프"
+      onKeyDown={handleChartKeyDown}
+      role="group"
+      tabIndex={0}
+    >
       <svg
         viewBox={`0 0 ${width} ${height}`}
         role="img"
         aria-label="시뮬레이션 미래 추이 그래프"
-        onPointerDown={selectPoint}
+        onPointerDown={(event) => selectPoint(event, true)}
         onPointerMove={(event) => {
           if (event.buttons > 0 || event.pointerType === "touch") selectPoint(event);
         }}
@@ -2240,6 +2621,8 @@ function SimulationChart({
         {activePoint && (
           <g className="chartTooltip">
             <line x1={activeX} x2={activeX} y1={topPadding} y2={chartBottom} vectorEffect="non-scaling-stroke" />
+            <circle className="activeTotalPoint" cx={activeX} cy={toY(activePoint.totalValueKrw)} r="4.2" />
+            <circle className="activeLiquidPoint" cx={activeX} cy={toY(activePoint.liquidValueKrw)} r="4.2" />
             <rect x={labelX} y="12" width="115" height="86" rx="8" />
             <text className="tooltipDate" x={labelX + 9} y="29">
               {formatDisplayDate(activePoint.date)}
@@ -2288,7 +2671,7 @@ function SimulationTable({
     <>
       <div className="simulationTable" role="table" aria-label="기간별 시뮬레이션 결과">
         <div className="simulationTableHeader" role="row">
-          <span role="columnheader">일자</span>
+          <span role="columnheader">기준일</span>
           <span role="columnheader">예상 총자산</span>
           <span role="columnheader">현금화 가능</span>
           <span role="columnheader">제한</span>
@@ -2362,6 +2745,7 @@ function SimulationPointDetailPanel({
   previousPoint: SimulationPoint | null;
   compact?: boolean;
 }) {
+  const isMonthlyPoint = Boolean(point.periodStartDate && point.periodEndDate);
   const releasedValueKrw =
     point.detail.releasedAssets.reduce((sum, asset) => sum + asset.valueKrw, 0) +
     point.detail.releasedIncomes.reduce((sum, event) => sum + event.amountKrw, 0);
@@ -2379,8 +2763,9 @@ function SimulationPointDetailPanel({
     <div className={compact ? "simulationPointDetail compact" : "simulationPointDetail"}>
       <div className="simulationPointDetailHeader">
         <div>
-          <span>선택일 상세</span>
-          <strong>{formatDisplayDate(point.date)}</strong>
+          <span>{isMonthlyPoint ? "선택월 상세" : "선택일 상세"}</span>
+          <strong>{isMonthlyPoint ? formatDisplayMonth(point.date) : formatDisplayDate(point.date)}</strong>
+          {isMonthlyPoint && <small>기준일 {formatDisplayDate(point.periodEndDate ?? point.date)}</small>}
         </div>
         <div>
           <span>직전 대비</span>
@@ -2445,6 +2830,7 @@ function SimulationPointDetailPanel({
             title="계좌 제한"
             emptyText="계좌 제한 없음"
             items={point.detail.accountLockedItems.slice(0, compact ? 2 : 4).map((item) => ({
+              key: item.key,
               id: item.id,
               name: item.name,
               amountKrw: item.amountKrw,
@@ -2456,6 +2842,7 @@ function SimulationPointDetailPanel({
             title="자산 제한"
             emptyText="자산 제한 없음"
             items={point.detail.assetLockedItems.map((item) => ({
+              key: item.key,
               id: item.id,
               name: item.name,
               amountKrw: item.amountKrw,
@@ -2476,7 +2863,7 @@ function SimulationDetailSection({
   totalValueKrw
 }: {
   title: string;
-  items: Array<{ id: string; name: string; amountKrw: number; meta: string }>;
+  items: Array<{ key?: string; id: string; name: string; amountKrw: number; meta: string }>;
   emptyText: string;
   totalValueKrw?: number;
 }) {
@@ -2490,7 +2877,7 @@ function SimulationDetailSection({
         <small>{emptyText}</small>
       ) : (
         items.map((item) => (
-          <div className="simulationDetailItem" key={item.id}>
+          <div className="simulationDetailItem" key={item.key ?? `${item.id}-${item.meta}`}>
             <span>
               <b>{item.name}</b>
               <small>{item.meta}</small>
@@ -2857,12 +3244,16 @@ function AssetFormView({
         ? "배당일 기준 환율 입력"
         : "매수일/현재 기준 자동 반영";
   const isLinkOnlyEdit = isAggregateAssetEdit && mode === "buy";
+  const sellAllQuantity = mode === "sell" ? selectedPosition?.quantity ?? null : null;
+  const isSellAllSelected =
+    sellAllQuantity !== null && Math.abs((toNumberOrNull(form.quantity) ?? -1) - sellAllQuantity) < 0.000001;
+  const canSellAll = sellAllQuantity !== null && sellAllQuantity > 0 && !isLinkOnlyEdit;
 
   return (
     <form className="assetForm" noValidate onSubmit={onSubmit}>
       {isLinkOnlyEdit && (
         <div className="formNotice">
-          합산 자산은 분류와 티커 연동 정보만 일괄 수정합니다. 수량, 원가, 매수일은 각 거래 lot 값을 유지합니다.
+          합산 자산은 분류, 티커 연동, 매도 제한 정보만 일괄 수정합니다. 수량, 원가, 매수일은 각 거래 lot 값을 유지합니다.
         </div>
       )}
       <section className="formSection">
@@ -3065,15 +3456,42 @@ function AssetFormView({
 	            onChange={(event) => onChange({ ...form, currentValue: event.target.value })}
 	          />
           {mode !== "dividend" && (
-            <input
-              inputMode="decimal"
-              name="quantity"
-              placeholder="수량"
-	              max={mode === "sell" ? selectedPosition?.quantity ?? undefined : undefined}
-	              value={form.quantity}
-	              disabled={isLinkOnlyEdit}
-	              onChange={(event) => onChange({ ...form, quantity: event.target.value })}
-	            />
+            mode === "sell" ? (
+              <div className="sellQuantityControl">
+                <input
+                  inputMode="decimal"
+                  name="quantity"
+                  placeholder="수량"
+                  max={selectedPosition?.quantity ?? undefined}
+                  value={form.quantity}
+                  disabled={isLinkOnlyEdit}
+                  onChange={(event) => onChange({ ...form, quantity: event.target.value })}
+                />
+                <button
+                  className={isSellAllSelected ? "active" : ""}
+                  type="button"
+                  aria-pressed={isSellAllSelected}
+                  disabled={!canSellAll}
+                  title="보유 수량 전체를 매도 수량으로 입력"
+                  onClick={() => {
+                    if (sellAllQuantity !== null) {
+                      onChange({ ...form, quantity: quantityInputValue(sellAllQuantity) });
+                    }
+                  }}
+                >
+                  전량 매도
+                </button>
+              </div>
+            ) : (
+              <input
+                inputMode="decimal"
+                name="quantity"
+                placeholder="수량"
+                value={form.quantity}
+                disabled={isLinkOnlyEdit}
+                onChange={(event) => onChange({ ...form, quantity: event.target.value })}
+              />
+            )
           )}
         </div>
         {form.currency === "USD" || form.market === "us" ? (
@@ -3134,7 +3552,6 @@ function AssetFormView({
 	                type="checkbox"
 	                name="isSaleRestricted"
 	                checked={form.isSaleRestricted}
-	                disabled={isLinkOnlyEdit}
 	                onChange={(event) =>
                   onChange({
                     ...form,
@@ -3434,8 +3851,33 @@ function isZeroQuantityTrade(transaction: AssetTransaction) {
   return (transaction.transactionType === "buy" || transaction.transactionType === "sell") && transaction.quantity === 0;
 }
 
-function TimelineChart({ points }: { points: HistoryPoint[] }) {
+function historyPointsForRange(points: HistoryPoint[], targetDate: string, range: string) {
+  if (range === "all") return points;
+
+  const days = historyRangeDays(range);
+  const startDate = shiftDate(targetDate, -(days - 1));
+  return points.filter((point) => point.date >= startDate && point.date <= targetDate);
+}
+
+function historyRangeDays(range: string) {
+  switch (range) {
+    case "1w":
+      return 7;
+    case "3m":
+      return 90;
+    case "6m":
+      return 180;
+    case "1y":
+      return 365;
+    case "1m":
+    default:
+      return 30;
+  }
+}
+
+const TimelineChart = memo(function TimelineChart({ points, isUpdating = false }: { points: HistoryPoint[]; isUpdating?: boolean }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const chartRef = useRef<HTMLDivElement | null>(null);
   const width = 340;
   const height = 170;
   const leftPadding = 46;
@@ -3443,25 +3885,56 @@ function TimelineChart({ points }: { points: HistoryPoint[] }) {
   const topPadding = 16;
   const bottomPadding = 24;
   const chartBottom = height - bottomPadding;
-  const rawMaxValue = Math.max(1, ...points.flatMap((point) => [point.totalValueKrw, point.liquidValueKrw]));
-  const yTicks = chartYAxisTicks(rawMaxValue);
-  const maxValue = yTicks[yTicks.length - 1]?.value ?? rawMaxValue;
-  const xStep = points.length > 1 ? (width - leftPadding - rightPadding) / (points.length - 1) : 0;
-  const toX = (index: number) => (points.length > 1 ? leftPadding + index * xStep : (leftPadding + width - rightPadding) / 2);
-  const toY = (value: number) => chartBottom - (value / maxValue) * (chartBottom - topPadding);
-  const totalLine = points.map((point, index) => `${toX(index)},${toY(point.totalValueKrw)}`).join(" ");
-  const liquidLine = points.map((point, index) => `${toX(index)},${toY(point.liquidValueKrw)}`).join(" ");
-  const totalArea = areaPoints(points.map((point, index) => [toX(index), toY(point.totalValueKrw)]), chartBottom);
-  const liquidArea = areaPoints(points.map((point, index) => [toX(index), toY(point.liquidValueKrw)]), chartBottom);
-  const latest = points[points.length - 1];
-  const axisPoints = chartAxisPoints(points);
+  const chartData = useMemo(() => {
+    const rawMaxValue = Math.max(1, ...points.flatMap((point) => [point.totalValueKrw, point.liquidValueKrw]));
+    const yTicks = chartYAxisTicks(rawMaxValue);
+    const maxValue = yTicks[yTicks.length - 1]?.value ?? rawMaxValue;
+    const xStep = points.length > 1 ? (width - leftPadding - rightPadding) / (points.length - 1) : 0;
+    const toX = (index: number) => (points.length > 1 ? leftPadding + index * xStep : (leftPadding + width - rightPadding) / 2);
+    const toY = (value: number) => chartBottom - (value / maxValue) * (chartBottom - topPadding);
+    const totalPoints = points.map((point, index) => [toX(index), toY(point.totalValueKrw)]);
+    const liquidPoints = points.map((point, index) => [toX(index), toY(point.liquidValueKrw)]);
+
+    return {
+      yTicks,
+      xStep,
+      toX,
+      toY,
+      totalLine: totalPoints.map(([x, y]) => `${x},${y}`).join(" "),
+      liquidLine: liquidPoints.map(([x, y]) => `${x},${y}`).join(" "),
+      totalArea: areaPoints(totalPoints, chartBottom),
+      liquidArea: areaPoints(liquidPoints, chartBottom),
+      latest: points[points.length - 1],
+      axisPoints: chartAxisPoints(points)
+    };
+  }, [chartBottom, leftPadding, rightPadding, topPadding, width, points]);
+  const { yTicks, xStep, toX, toY, totalLine, liquidLine, totalArea, liquidArea, latest, axisPoints } = chartData;
   const activePoint = activeIndex === null ? null : points[activeIndex];
   const activeX = activeIndex === null ? 0 : toX(activeIndex);
   const labelX = activeX > width / 2 ? activeX - 120 : activeX + 8;
-  const markerIndexes = visibleTimelineMarkerIndexes(points.length, activeIndex);
+  const markerIndexes = useMemo(() => visibleTimelineMarkerIndexes(points.length, activeIndex), [points.length, activeIndex]);
 
-  function selectPoint(event: PointerEvent<SVGSVGElement>) {
+  useEffect(() => {
+    setActiveIndex((current) => (current !== null && current >= points.length ? null : current));
+  }, [points.length]);
+
+  function moveActivePoint(delta: number) {
+    setActiveIndex((current) => {
+      if (points.length === 0) return null;
+      const baseIndex = current ?? (delta > 0 ? -1 : points.length);
+      return Math.max(0, Math.min(points.length - 1, baseIndex + delta));
+    });
+  }
+
+  function handleChartKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    moveActivePoint(event.key === "ArrowRight" ? 1 : -1);
+  }
+
+  function selectPoint(event: PointerEvent<SVGSVGElement>, shouldFocus = false) {
     if (points.length === 0) return;
+    if (shouldFocus) chartRef.current?.focus({ preventScroll: true });
     const rect = event.currentTarget.getBoundingClientRect();
     const chartRight = width - rightPadding;
     const x = Math.max(leftPadding, Math.min(chartRight, ((event.clientX - rect.left) / rect.width) * width));
@@ -3470,20 +3943,36 @@ function TimelineChart({ points }: { points: HistoryPoint[] }) {
   }
 
   if (points.length === 0) {
-    return <span className="emptyText">표시할 추이 데이터가 없습니다.</span>;
+    return (
+      <div className="chartWrap chartWrapEmpty" aria-busy={isUpdating}>
+        <span className="emptyText">{isUpdating ? "추이 데이터를 불러오는 중입니다." : "표시할 추이 데이터가 없습니다."}</span>
+      </div>
+    );
   }
 
   return (
-    <div className="chartWrap">
+    <div
+      ref={chartRef}
+      className={`chartWrap${isUpdating ? " isUpdating" : ""}`}
+      aria-busy={isUpdating}
+      aria-label="자산 추이 그래프. 좌우 화살표로 선택 시점을 이동할 수 있습니다."
+      onBlur={() => setActiveIndex(null)}
+      onKeyDown={handleChartKeyDown}
+      role="group"
+      tabIndex={0}
+    >
+      {isUpdating && <span className="chartUpdateBadge">업데이트 중</span>}
       <svg
         viewBox={`0 0 ${width} ${height}`}
         role="img"
         aria-label="자산 추이 그래프"
-        onPointerDown={selectPoint}
+        onPointerDown={(event) => selectPoint(event, true)}
         onPointerMove={(event) => {
           if (event.buttons > 0 || event.pointerType === "touch") selectPoint(event);
         }}
-        onPointerLeave={() => setActiveIndex(null)}
+        onPointerLeave={() => {
+          if (document.activeElement !== chartRef.current) setActiveIndex(null);
+        }}
       >
         <defs>
           <linearGradient id="totalAreaGradient" x1="0" x2="0" y1="0" y2="1">
@@ -3554,7 +4043,7 @@ function TimelineChart({ points }: { points: HistoryPoint[] }) {
       </div>
     </div>
   );
-}
+});
 
 function chartAxisPoints(points: Array<{ date: string }>) {
   if (points.length === 0) {
@@ -3615,11 +4104,15 @@ function AllocationPie({
   items,
   labels = {},
   activeCategory,
+  activeDetails,
+  activeCategoryLabel,
   onToggle
 }: {
   items: BreakdownItem[];
   labels?: Record<string, string>;
   activeCategory: string | null;
+  activeDetails: AssetDetailItem[];
+  activeCategoryLabel: string | null;
   onToggle: (category: string) => void;
 }) {
   const visibleItems = items.filter((item) => item.valueKrw > 0);
@@ -3670,6 +4163,7 @@ function AllocationPie({
           {compactKrw(total)}
         </text>
       </svg>
+      {activeCategory && <AllocationSubPie details={activeDetails} categoryLabel={activeCategoryLabel ?? "선택 분류"} />}
     </div>
   );
 }
@@ -3685,6 +4179,9 @@ function AllocationAnalysis({
 }) {
   const [activeBreakdownCategory, setActiveBreakdownCategory] = useState<string | null>(null);
   const visibleItems = items.filter((item) => item.valueKrw > 0);
+  const activeItem = visibleItems.find((item) => item.key === activeBreakdownCategory) ?? null;
+  const activeDetails = activeItem ? categoryAssetDetails(assets, activeItem.key, activeItem.valueKrw) : [];
+  const activeCategoryLabel = activeItem ? labels[activeItem.key] ?? activeItem.label : null;
   const toggleBreakdownCategory = (category: string) =>
     setActiveBreakdownCategory((current) => (current === category ? null : category));
 
@@ -3698,13 +4195,15 @@ function AllocationAnalysis({
         items={visibleItems}
         labels={labels}
         activeCategory={activeBreakdownCategory}
+        activeDetails={activeDetails}
+        activeCategoryLabel={activeCategoryLabel}
         onToggle={toggleBreakdownCategory}
       />
       <div className="allocationBreakdownList">
         {visibleItems.map((item, index) => {
           const color = allocationColors[index % allocationColors.length];
-          const details = categoryAssetDetails(assets, item.key, item.valueKrw);
           const isActive = activeBreakdownCategory === item.key;
+          const details = isActive ? activeDetails : [];
 
           return (
             <div className={isActive ? "allocationBreakdownItem active" : "allocationBreakdownItem"} key={item.key}>
@@ -3723,7 +4222,15 @@ function AllocationAnalysis({
                   <i style={{ width: `${Math.min(100, item.share)}%`, background: color }} />
                 </span>
               </button>
-              {isActive && <AllocationDetailList details={details} groupShareLabel="분류 내" />}
+              {isActive && (
+                <AllocationDetailList
+                  details={details}
+                  groupShareLabel="분류 내"
+                  variant="compact"
+                  amountFormatter={formatKrwThousands}
+                  signedAmountFormatter={formatSignedKrwThousands}
+                />
+              )}
             </div>
           );
         })}
@@ -3734,10 +4241,16 @@ function AllocationAnalysis({
 
 function AllocationDetailList({
   details,
-  groupShareLabel
+  groupShareLabel,
+  variant = "full",
+  amountFormatter = formatKrw,
+  signedAmountFormatter = formatSignedKrw
 }: {
   details: AssetDetailItem[];
   groupShareLabel: string;
+  variant?: "full" | "compact";
+  amountFormatter?: (value: number) => string;
+  signedAmountFormatter?: (value: number) => string;
 }) {
   if (details.length === 0) {
     return <span className="allocationDetailEmpty">세부 자산 없음</span>;
@@ -3745,36 +4258,151 @@ function AllocationDetailList({
 
   return (
     <div className="allocationDetails">
-      {details.map((detail) => (
-        <div className="allocationDetailRow" key={detail.key}>
-          <span className="allocationDetailMain">
-            <strong>{detail.name}</strong>
-            <span>
-              {groupShareLabel} {formatPercent(detail.groupShare)} · 전체 {formatPercent(detail.totalShare)}
-            </span>
-          </span>
-          <span className="allocationDetailStats">
-            <span>
-              <em>원금</em>
-              <b>{formatKrw(detail.costKrw)}</b>
-            </span>
-            <span>
-              <em>평가</em>
-              <b>{formatKrw(detail.valueKrw)}</b>
-            </span>
-            <span>
-              <em>손익</em>
-              <b className={gainClass(detail.gainKrw)}>{formatSignedKrw(detail.gainKrw)}</b>
-            </span>
-            <span>
-              <em>수익률</em>
-              <b className={gainClass(detail.gainKrw)}>{formatPercent(detail.gainRate)}</b>
-            </span>
-          </span>
-        </div>
-      ))}
+      {details.map((detail) => {
+        const rowContent =
+          variant === "compact" ? (
+            <>
+              <span className="allocationDetailMain">
+                <strong>{detail.name}</strong>
+                <span className={gainClass(detail.gainKrw)}>{signedAmountFormatter(detail.gainKrw)}</span>
+              </span>
+              <span className="allocationDetailStats compact">
+                <span className="allocationValueStat">
+                  <em>평가금</em>
+                  <b>{amountFormatter(detail.valueKrw)}</b>
+                </span>
+                <span>
+                  <em>수익률</em>
+                  <b className={gainClass(detail.gainKrw)}>{formatPercent(detail.gainRate)}</b>
+                </span>
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="allocationDetailMain">
+                <strong>{detail.name}</strong>
+                <span>
+                  {groupShareLabel} {formatPercent(detail.groupShare)} · 전체 {formatPercent(detail.totalShare)}
+                </span>
+              </span>
+              <span className="allocationDetailStats">
+                <span>
+                  <em>원금</em>
+                  <b>{amountFormatter(detail.costKrw)}</b>
+                </span>
+                <span>
+                  <em>평가</em>
+                  <b>{amountFormatter(detail.valueKrw)}</b>
+                </span>
+                <span>
+                  <em>손익</em>
+                  <b className={gainClass(detail.gainKrw)}>{signedAmountFormatter(detail.gainKrw)}</b>
+                </span>
+                <span>
+                  <em>수익률</em>
+                  <b className={gainClass(detail.gainKrw)}>{formatPercent(detail.gainRate)}</b>
+                </span>
+              </span>
+            </>
+          );
+
+        return (
+          <div className="allocationDetailRow" key={detail.key}>
+            {rowContent}
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+function AllocationSubPie({ details, categoryLabel }: { details: AssetDetailItem[]; categoryLabel: string }) {
+  const slices = allocationSubPieSlices(details);
+  const total = slices.reduce((sum, slice) => sum + slice.valueKrw, 0);
+  const circumference = 201.06;
+  let offset = 25;
+
+  return (
+    <div className="allocationSubChart">
+      <div className="allocationSubHeader">
+        <strong>{categoryLabel} 구성</strong>
+        <span>분류 내 비중</span>
+      </div>
+      {slices.length === 0 || total <= 0 ? (
+        <span className="allocationDetailEmpty">세부 자산 없음</span>
+      ) : (
+        <div className="allocationSubBody">
+          <svg viewBox="0 0 96 96" className="subPieChart" role="img" aria-label={`${categoryLabel} 종목 구성 파이차트`}>
+            <circle className="pieBase" cx="48" cy="48" r="32" />
+            {slices.map((slice) => {
+              const length = (slice.valueKrw / total) * circumference;
+              const circle = (
+                <circle
+                  aria-label={`${slice.label} ${formatPercent(slice.share)}`}
+                  className="subPieSlice"
+                  key={slice.key}
+                  cx="48"
+                  cy="48"
+                  r="32"
+                  stroke={slice.color}
+                  strokeDasharray={`${length} ${circumference - length}`}
+                  strokeDashoffset={offset}
+                />
+              );
+              offset -= length;
+              return circle;
+            })}
+            <text x="48" y="45" textAnchor="middle">
+              구성
+            </text>
+            <text x="48" y="59" textAnchor="middle">
+              {slices.length}개
+            </text>
+          </svg>
+          <div className="allocationSubLegend">
+            {slices.map((slice) => (
+              <div key={slice.key}>
+                <span>
+                  <i style={{ background: slice.color }} />
+                  <strong>{slice.label}</strong>
+                </span>
+                <b>{formatPercent(slice.share)}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function allocationSubPieSlices(details: AssetDetailItem[]) {
+  const visibleDetails = details.filter((detail) => detail.valueKrw > 0);
+  const totalValueKrw = visibleDetails.reduce((sum, detail) => sum + detail.valueKrw, 0);
+  if (totalValueKrw <= 0) return [];
+
+  const topDetails = visibleDetails.slice(0, 4);
+  const otherDetails = visibleDetails.slice(4);
+  const rows = topDetails.map((detail, index) => ({
+    key: detail.key,
+    label: detail.name,
+    valueKrw: detail.valueKrw,
+    share: roundNumber((detail.valueKrw / totalValueKrw) * 100, 1),
+    color: allocationColors[index % allocationColors.length]
+  }));
+  const otherValueKrw = otherDetails.reduce((sum, detail) => sum + detail.valueKrw, 0);
+
+  if (otherValueKrw > 0) {
+    rows.push({
+      key: "other",
+      label: "기타",
+      valueKrw: otherValueKrw,
+      share: roundNumber((otherValueKrw / totalValueKrw) * 100, 1),
+      color: allocationColors[rows.length % allocationColors.length]
+    });
+  }
+
+  return rows;
 }
 
 type AssetDetailItem = {
@@ -3886,6 +4514,46 @@ function dashboardPeriodRows(summary: Summary, points: HistoryPoint[], targetDat
       deltaKrw: point ? summary.totalValueKrw - point.totalValueKrw : null
     };
   });
+}
+
+function dashboardIncomePeriodRows(summary: Summary, points: HistoryPoint[], targetDate: string): DashboardIncomePeriodRow[] {
+  const targets = [
+    { label: "1년", date: shiftDate(targetDate, -365) },
+    { label: "3개월", date: shiftDate(targetDate, -90) },
+    { label: "1개월", date: shiftDate(targetDate, -30) },
+    { label: "2주일", date: shiftDate(targetDate, -14) },
+    { label: "1주일", date: shiftDate(targetDate, -7) },
+    { label: "3일", date: shiftDate(targetDate, -3) },
+    { label: "1일", date: shiftDate(targetDate, -1) }
+  ];
+
+  return targets.map((target) => {
+    const point = historyPointOnOrBefore(points, target.date);
+    if (!point) {
+      return {
+        label: target.label,
+        date: null,
+        valueKrw: null,
+        deltaKrw: null,
+        rate: null
+      };
+    }
+
+    const deltaKrw = summary.totalIncomeKrw - point.totalIncomeKrw;
+    return {
+      label: target.label,
+      date: point.date,
+      valueKrw: point.totalIncomeKrw,
+      deltaKrw,
+      rate: dashboardIncomeChangeRate(deltaKrw, point.totalIncomeKrw)
+    };
+  });
+}
+
+function dashboardIncomeChangeRate(deltaKrw: number, baseKrw: number) {
+  if (baseKrw === 0) return deltaKrw === 0 ? 0 : null;
+  if (baseKrw < 0) return null;
+  return roundNumber((deltaKrw / baseKrw) * 100, 1);
 }
 
 function buildTransactionFlow(transactions: AssetTransaction[]): TransactionFlowSummary {
@@ -4287,7 +4955,14 @@ function AccountBreakdownList({ items, assets }: { items: BreakdownItem[]; asset
                 <i style={{ width: `${Math.min(100, item.share)}%`, background: color }} />
               </span>
             </button>
-            {isActive && <AllocationDetailList details={details} groupShareLabel="계좌 내" />}
+            {isActive && (
+              <AllocationDetailList
+                details={details}
+                groupShareLabel="계좌 내"
+                amountFormatter={formatKrwThousands}
+                signedAmountFormatter={formatSignedKrwThousands}
+              />
+            )}
           </div>
         );
       })}
@@ -4315,6 +4990,367 @@ function Segmented({
   );
 }
 
+function buildSummaryMetricDetails(summary: Summary, transactions: AssetTransaction[], basisDate: string) {
+  const details = new Map<string, MetricDetail>();
+  const assets = summary.assets;
+  const transactionsToDate = transactions.filter((transaction) => transaction.transactionDate <= basisDate);
+  const liquidAssets = assets.filter((asset) => asset.isLiquidByDate);
+  const lockedAssets = assets.filter((asset) => !asset.isLiquidByDate);
+  const realizedTransactions = transactionsToDate.filter((transaction) => transaction.realizedGainKrw !== 0);
+  const dividendTransactions = transactionsToDate.filter((transaction) => transaction.dividendIncomeKrw !== 0);
+
+  details.set("total-assets", {
+    key: "total-assets",
+    title: "총자산 구성",
+    totalKrw: summary.totalValueKrw,
+    basisDate,
+    format: "money",
+    rows: assetDetailRows(assets, "value"),
+    emptyText: "표시할 보유 자산이 없습니다.",
+    note: "보유 자산의 평가금액 합계입니다."
+  });
+  details.set("total-cost", {
+    key: "total-cost",
+    title: "총 원금 구성",
+    totalKrw: summary.totalCostKrw,
+    basisDate,
+    format: "money",
+    rows: assetDetailRows(assets, "cost"),
+    emptyText: "표시할 원금 내역이 없습니다.",
+    note: "보유 자산의 원금 기준 합계입니다."
+  });
+  details.set("liquid", {
+    key: "liquid",
+    title: "현금화 가능 내역",
+    totalKrw: summary.liquidValueKrw,
+    basisDate,
+    format: "money",
+    rows: assetDetailRows(liquidAssets, "value"),
+    emptyText: "현재 현금화 가능한 자산이 없습니다.",
+    note: "현재 기준 현금화 가능으로 분류된 자산입니다."
+  });
+  details.set("locked", {
+    key: "locked",
+    title: "제한 자산 내역",
+    totalKrw: summary.lockedValueKrw,
+    basisDate,
+    format: "money",
+    rows: assetDetailRows(lockedAssets, "value", lockedAssetMeta),
+    emptyText: "현재 제한 상태인 자산이 없습니다.",
+    note: "계좌 제한과 사용자가 지정한 자산 제한을 기준으로 합니다."
+  });
+  details.set("total-income", {
+    key: "total-income",
+    title: "총수익 구성",
+    totalKrw: summary.totalIncomeKrw,
+    basisDate,
+    format: "signed",
+    rows: [
+      {
+        id: "total-income-unrealized",
+        label: "평가손익",
+        meta: "현재 보유 자산의 미실현 손익",
+        amountKrw: roundMetricAmount(summary.unrealizedGainKrw),
+        tone: metricTone(summary.unrealizedGainKrw)
+      },
+      {
+        id: "total-income-realized",
+        label: "차익실현",
+        meta: `${realizedTransactions.length.toLocaleString("ko-KR")}건 거래 기준`,
+        amountKrw: roundMetricAmount(summary.realizedGainKrw),
+        tone: metricTone(summary.realizedGainKrw)
+      },
+      {
+        id: "total-income-dividend",
+        label: "배당수익",
+        meta: `${dividendTransactions.length.toLocaleString("ko-KR")}건 배당 기준`,
+        amountKrw: roundMetricAmount(summary.dividendIncomeKrw),
+        tone: metricTone(summary.dividendIncomeKrw)
+      }
+    ],
+    emptyText: "표시할 수익 구성 내역이 없습니다.",
+    note: "평가손익, 차익실현, 배당수익을 합산합니다."
+  });
+  details.set("unrealized", {
+    key: "unrealized",
+    title: "평가손익 내역",
+    totalKrw: summary.unrealizedGainKrw,
+    basisDate,
+    format: "signed",
+    rows: groupedUnrealizedGainDetailRows(assets),
+    emptyText: "평가손익이 있는 보유 자산이 없습니다.",
+    note: "현재 보유 자산별 미실현 손익입니다.",
+    groupRowsByTone: true
+  });
+  details.set("realized", {
+    key: "realized",
+    title: "차익실현 내역",
+    totalKrw: summary.realizedGainKrw,
+    basisDate,
+    format: "signed",
+    rows: transactionDetailRows(realizedTransactions, "realized"),
+    emptyText: "차익실현 거래가 없습니다.",
+    note: "기준일까지 반영된 실현손익 거래입니다.",
+    groupRowsByTone: true
+  });
+  details.set("dividend", {
+    key: "dividend",
+    title: "배당수익 내역",
+    totalKrw: summary.dividendIncomeKrw,
+    basisDate,
+    format: "signed",
+    rows: groupedDividendIncomeDetailRows(dividendTransactions, assets),
+    emptyText: "배당수익 거래가 없습니다.",
+    note: "기준일까지 반영된 배당 거래입니다.",
+    groupRowsByTone: true
+  });
+
+  return details;
+}
+
+function buildSimulationMetricDetails(
+  result: SimulationResult,
+  incomes: SimulationIncome[],
+  accounts: Account[],
+  startDate: string,
+  endDate: string
+) {
+  const details = new Map<string, MetricDetail>();
+  const finalPoint = result.finalPoint;
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
+  const incomeEvents = expandSimulationIncomeEvents(incomes, accountById, startDate, endDate);
+  const liquidAssets = result.assetRows.filter((asset) => asset.availableFrom !== null && asset.availableFrom <= finalPoint.date);
+  const liquidAssetValue = liquidAssets.reduce((sum, asset) => sum + asset.valueKrw, 0);
+  const liquidIncomeValue = Math.max(0, finalPoint.liquidValueKrw - liquidAssetValue);
+
+  details.set("simulation-total", {
+    key: "simulation-total",
+    title: "예상 총자산 구성",
+    totalKrw: finalPoint.totalValueKrw,
+    basisDate: finalPoint.date,
+    format: "money",
+    rows: [
+      {
+        id: "simulation-total-assets",
+        label: "시작 자산",
+        meta: `${result.assetRows.length.toLocaleString("ko-KR")}개 자산`,
+        amountKrw: roundMetricAmount(result.startingAssetsKrw)
+      },
+      {
+        id: "simulation-total-income",
+        label: "누적 예상 수입",
+        meta: `${incomeEvents.length.toLocaleString("ko-KR")}건 예상 이벤트`,
+        amountKrw: roundMetricAmount(result.cumulativeIncomeKrw)
+      }
+    ],
+    emptyText: "예상 총자산 구성 내역이 없습니다.",
+    note: "시작 자산에 시뮬레이션 기간의 예상 수입을 더합니다."
+  });
+  details.set("simulation-liquid", {
+    key: "simulation-liquid",
+    title: "시뮬레이션 현금화 가능 내역",
+    totalKrw: finalPoint.liquidValueKrw,
+    basisDate: finalPoint.date,
+    format: "money",
+    rows: [
+      ...simulationAssetDetailRows(liquidAssets),
+      ...(liquidIncomeValue > 0
+        ? [
+            {
+              id: "simulation-liquid-income",
+              label: "현금화 가능 예상 수입",
+              meta: "시뮬레이션 기간 중 현금화 가능해진 수입",
+              amountKrw: roundMetricAmount(liquidIncomeValue)
+            }
+          ]
+        : [])
+    ],
+    emptyText: "시뮬레이션 종료 시점에 현금화 가능한 내역이 없습니다.",
+    note: "종료 기준일에 현금화 가능한 자산과 수입입니다."
+  });
+  details.set("simulation-locked", {
+    key: "simulation-locked",
+    title: "시뮬레이션 제한 자산 내역",
+    totalKrw: finalPoint.lockedValueKrw,
+    basisDate: finalPoint.date,
+    format: "money",
+    rows: [
+      ...simulationLockedDetailRows(finalPoint.detail.accountLockedItems, "계좌 제한"),
+      ...simulationLockedDetailRows(finalPoint.detail.assetLockedItems, "자산 제한")
+    ],
+    emptyText: "시뮬레이션 종료 시점에 제한 상태인 내역이 없습니다.",
+    note: "종료 기준일에도 현금화되지 않은 계좌/자산 제한입니다."
+  });
+  details.set("simulation-income", {
+    key: "simulation-income",
+    title: "누적 예상 수입 내역",
+    totalKrw: result.cumulativeIncomeKrw,
+    basisDate: finalPoint.date,
+    format: "money",
+    rows: simulationIncomeDetailRows(incomeEvents),
+    emptyText: "입력된 예상 수입이 없습니다.",
+    note: "반복 수입은 기간 내 발생 횟수별로 합산합니다."
+  });
+
+  return details;
+}
+
+function assetDetailRows(
+  assets: AssetValuation[],
+  amountType: "value" | "cost" | "gain",
+  metaFormatter: (asset: AssetValuation) => string = baseAssetMeta
+): MetricDetailRow[] {
+  return [...assets]
+    .sort((a, b) => Math.abs(metricAssetAmount(b, amountType)) - Math.abs(metricAssetAmount(a, amountType)))
+    .map((asset) => ({
+      id: `${amountType}-${asset.id}`,
+      label: asset.name,
+      meta: metaFormatter(asset),
+      amountKrw: roundMetricAmount(metricAssetAmount(asset, amountType)),
+      rateText: amountType === "gain" ? formatPercent(asset.gainRate) : undefined,
+      tone: amountType === "gain" ? metricTone(asset.gainKrw) : undefined
+    }));
+}
+
+function groupedUnrealizedGainDetailRows(assets: AssetValuation[]): MetricDetailRow[] {
+  return groupedUnrealizedGainRows(assets).map((row) => {
+    const tickerText = row.ticker ? ` · ${row.ticker}` : "";
+    const countText = row.count > 1 ? ` · ${row.count.toLocaleString("ko-KR")}건 합산` : "";
+
+    return {
+      id: `unrealized-${row.key}`,
+      label: row.label,
+      meta: `${row.accountName} · ${assetLabels[row.type]}${tickerText}${countText}`,
+      amountKrw: roundMetricAmount(row.amountKrw),
+      rateText: formatPercent(row.gainRate),
+      tone: metricTone(row.amountKrw)
+    };
+  });
+}
+
+function transactionDetailRows(transactions: AssetTransaction[], type: "realized" | "dividend"): MetricDetailRow[] {
+  return [...transactions]
+    .sort((a, b) => b.transactionDate.localeCompare(a.transactionDate) || Math.abs(metricTransactionAmount(b, type)) - Math.abs(metricTransactionAmount(a, type)))
+    .map((transaction) => ({
+      id: `${type}-${transaction.id}`,
+      label: transaction.assetName ?? (transaction.transactionType === "deposit" ? "현금" : "자산"),
+      meta: `${formatDisplayDate(transaction.transactionDate)} · ${transaction.accountName} · ${transactionLabels[transaction.transactionType]}`,
+      amountKrw: roundMetricAmount(metricTransactionAmount(transaction, type)),
+      tone: metricTone(metricTransactionAmount(transaction, type))
+    }));
+}
+
+function groupedDividendIncomeDetailRows(transactions: AssetTransaction[], assets: AssetValuation[]): MetricDetailRow[] {
+  return groupedDividendIncomeRows(transactions, assets).map((row) => ({
+    id: `dividend-${row.key}`,
+    label: row.label,
+    meta: `${row.accountName} · ${row.count.toLocaleString("ko-KR")}건 · ${formatMetricDateRange(row.firstDate, row.lastDate)}`,
+    amountKrw: roundMetricAmount(row.amountKrw),
+    tone: metricTone(row.amountKrw)
+  }));
+}
+
+function formatMetricDateRange(firstDate: string, lastDate: string) {
+  return firstDate === lastDate ? formatDisplayDate(firstDate) : `${formatDisplayDate(firstDate)}~${formatDisplayDate(lastDate)}`;
+}
+
+function simulationAssetDetailRows(assets: SimulationAssetRow[]): MetricDetailRow[] {
+  return [...assets]
+    .sort((a, b) => b.valueKrw - a.valueKrw)
+    .map((asset) => ({
+      id: `simulation-asset-${asset.id}`,
+      label: asset.name,
+      meta: `${asset.accountName} · ${asset.availableFrom ? `${asset.availableFrom}부터 가능` : "현금화 불가"}`,
+      amountKrw: roundMetricAmount(asset.valueKrw)
+    }));
+}
+
+function simulationLockedDetailRows(items: SimulationLockedItem[], reasonLabel: string): MetricDetailRow[] {
+  return items.map((item) => ({
+    id: `${reasonLabel}-${item.key}`,
+    label: item.name,
+    meta: `${reasonLabel} · ${simulationLockedItemMeta(item)}`,
+    amountKrw: roundMetricAmount(item.amountKrw),
+    tone: "warning" as const
+  }));
+}
+
+function simulationIncomeDetailRows(events: SimulationIncomeEvent[]): MetricDetailRow[] {
+  const grouped = events.reduce<Map<string, { name: string; accountName: string | null; amountKrw: number; count: number; firstDate: string; lastDate: string }>>(
+    (acc, event) => {
+      const key = `${event.name}:${event.accountName ?? ""}`;
+      const current =
+        acc.get(key) ??
+        {
+          name: event.name,
+          accountName: event.accountName,
+          amountKrw: 0,
+          count: 0,
+          firstDate: event.date,
+          lastDate: event.date
+        };
+      current.amountKrw += event.amountKrw;
+      current.count += 1;
+      if (event.date < current.firstDate) current.firstDate = event.date;
+      if (event.date > current.lastDate) current.lastDate = event.date;
+      acc.set(key, current);
+      return acc;
+    },
+    new Map()
+  );
+
+  return Array.from(grouped.entries())
+    .map(([key, row]) => ({
+      id: `simulation-income-${key}`,
+      label: row.name,
+      meta: `${row.accountName ? `${row.accountName} · ` : ""}${row.count.toLocaleString("ko-KR")}회 · ${formatDisplayDate(row.firstDate)}~${formatDisplayDate(row.lastDate)}`,
+      amountKrw: roundMetricAmount(row.amountKrw)
+    }))
+    .sort((a, b) => b.amountKrw - a.amountKrw);
+}
+
+function metricAssetAmount(asset: AssetValuation, amountType: "value" | "cost" | "gain") {
+  if (amountType === "cost") return asset.costKrw;
+  if (amountType === "gain") return asset.gainKrw;
+  return asset.valueKrw;
+}
+
+function metricTransactionAmount(transaction: AssetTransaction, type: "realized" | "dividend") {
+  return type === "realized" ? transaction.realizedGainKrw : transaction.dividendIncomeKrw;
+}
+
+function baseAssetMeta(asset: AssetValuation) {
+  const tickerText = asset.ticker ? ` · ${asset.ticker}` : "";
+  return `${asset.accountName} · ${assetLabels[asset.type]}${tickerText}`;
+}
+
+function lockedAssetMeta(asset: AssetValuation) {
+  if (asset.liquidityBlockReason === "account") {
+    return `${asset.accountName} · 계좌 제한${asset.accountLiquidityUnlockDate ? ` · ${asset.accountLiquidityUnlockDate} 이후` : ""}`;
+  }
+  return `${asset.accountName} · 자산 제한 · ${asset.effectiveLiquidFrom} 이후`;
+}
+
+function metricTone(value: number): MetricDetailRow["tone"] {
+  if (value > 0) return "positive";
+  if (value < 0) return "negative";
+  return "neutral";
+}
+
+function metricDetailRowClass(row: MetricDetailRow, format: MetricDetailFormat) {
+  if (row.tone === "warning") return "gain warning";
+  if (format === "signed" || row.tone === "positive" || row.tone === "negative") return gainClass(row.amountKrw);
+  return "";
+}
+
+function formatMetricDetailAmount(value: number, format: MetricDetailFormat) {
+  return format === "signed" ? formatSignedKrw(value) : formatKrw(value);
+}
+
+function roundMetricAmount(value: number) {
+  return Math.round(value);
+}
+
 function LiquiditySplitBar({ liquidRatio }: { liquidRatio: number }) {
   const safeLiquidRatio = Math.max(0, Math.min(100, liquidRatio));
 
@@ -4332,7 +5368,9 @@ function Metric({
   detail,
   icon,
   tone = "neutral",
-  priority = "normal"
+  priority = "normal",
+  selected = false,
+  onClick
 }: {
   title: string;
   value: string;
@@ -4340,15 +5378,115 @@ function Metric({
   icon: ReactNode;
   tone?: "neutral" | "positive" | "negative" | "warning";
   priority?: "normal" | "high";
+  selected?: boolean;
+  onClick?: () => void;
 }) {
-  return (
-    <article className={`metric ${tone} ${priority}`}>
+  const className = `metric ${tone} ${priority}${onClick ? " clickable" : ""}${selected ? " selected" : ""}`;
+  const content = (
+    <>
       <span>{icon}</span>
       <p>{title}</p>
       <strong>{value}</strong>
       {detail && <small>{detail}</small>}
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button className={className} type="button" aria-pressed={selected} onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <article className={className}>
+      {content}
     </article>
   );
+}
+
+function MetricDetailPanel({ detail, onClose }: { detail: MetricDetail; onClose: () => void }) {
+  const sumKrw = detail.rows.reduce((sum, row) => sum + row.amountKrw, 0);
+  const rowSections = metricDetailRowSections(detail);
+
+  return (
+    <section className="metricDetailPanel" aria-label={`${detail.title} 상세 내역`}>
+      <div className="metricDetailHeader">
+        <div>
+          <span>{formatDisplayDate(detail.basisDate)} 기준</span>
+          <strong>{detail.title}</strong>
+          {detail.note && <small>{detail.note}</small>}
+        </div>
+        <div>
+          <b className={detail.format === "signed" ? gainClass(detail.totalKrw) : ""}>
+            {formatMetricDetailAmount(detail.totalKrw, detail.format)}
+          </b>
+          <button type="button" onClick={onClose} aria-label="상세 내역 닫기">
+            <X size={16} />
+          </button>
+        </div>
+      </div>
+
+      {detail.rows.length === 0 ? (
+        <span className="emptyText">{detail.emptyText}</span>
+      ) : (
+        <>
+          <div className="metricDetailList">
+            {rowSections.map((section) => (
+              <div className="metricDetailSection" key={section.key}>
+                {section.label && (
+                  <div className={`metricDetailSectionHeader ${section.tone}`}>
+                    <span>{section.label}</span>
+                    <b>
+                      {formatMetricDetailAmount(section.totalKrw, detail.format)} · {section.rows.length.toLocaleString("ko-KR")}개
+                    </b>
+                  </div>
+                )}
+                {section.rows.map((row) => (
+                  <div className="metricDetailItem" key={row.id}>
+                    <span>
+                      <strong>{row.label}</strong>
+                      <small>{row.meta}</small>
+                    </span>
+                    <div>
+                      <b className={metricDetailRowClass(row, detail.format)}>
+                        {formatMetricDetailAmount(row.amountKrw, detail.format)}
+                      </b>
+                      {row.rateText && <em className={metricDetailRowClass(row, detail.format)}>{row.rateText}</em>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="metricDetailFooter">
+            <span>상세 합계</span>
+            <b className={detail.format === "signed" ? gainClass(sumKrw) : ""}>{formatMetricDetailAmount(sumKrw, detail.format)}</b>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function metricDetailRowSections(detail: MetricDetail) {
+  if (!detail.groupRowsByTone) {
+    return [{ key: "all", label: "", tone: "neutral", rows: detail.rows, totalKrw: detail.rows.reduce((sum, row) => sum + row.amountKrw, 0) }];
+  }
+
+  const sections = [
+    { key: "positive", label: "수익 합계", tone: "positive", rows: detail.rows.filter((row) => row.amountKrw > 0) },
+    { key: "negative", label: "손실 합계", tone: "negative", rows: detail.rows.filter((row) => row.amountKrw < 0) },
+    { key: "neutral", label: "변동 없음", tone: "neutral", rows: detail.rows.filter((row) => row.amountKrw === 0) }
+  ];
+
+  return sections
+    .filter((section) => section.rows.length > 0)
+    .map((section) => ({
+      ...section,
+      totalKrw: section.rows.reduce((sum, row) => sum + row.amountKrw, 0)
+    }));
 }
 
 function TradeSaveSummary({
@@ -4444,22 +5582,8 @@ function buildSimulation(
   const assetRows = assets
     .filter((asset) => asset.valueKrw > 0)
     .map((asset) => {
-      const availableFrom = assetSimulationAvailableFrom(asset);
-      const blockReason: SimulationResult["assetRows"][number]["blockReason"] =
-        asset.liquidityBlockReason === "account" ? "account" : "asset";
-      const restrictionText =
-        asset.liquidityBlockReason === "account"
-          ? asset.accountLiquidityRestrictionReason || "계좌 제한"
-          : asset.liquidityBlockReason === "asset"
-            ? "자산 제한"
-            : "제한 없음";
-      const state: SimulationResult["assetRows"][number]["state"] = !availableFrom
-        ? "unavailable"
-        : availableFrom <= startDate
-          ? "liquid"
-          : availableFrom <= safeEndDate
-            ? "scheduled"
-            : "unavailable";
+      const availability = simulationAssetAvailability(asset);
+      const state = simulationAssetState(availability.availableFrom, startDate, safeEndDate);
 
       return {
         id: asset.id,
@@ -4468,16 +5592,16 @@ function buildSimulation(
         name: asset.name,
         accountName: asset.accountName,
         valueKrw: Math.round(asset.valueKrw),
-        availableFrom,
-        blockReason,
-        restrictionText,
+        availableFrom: availability.availableFrom,
+        blockReason: availability.blockReason,
+        restrictionText: availability.restrictionText,
         state
       };
     })
     .sort((a, b) => b.valueKrw - a.valueKrw);
   const startingAssetsKrw = assetRows.reduce((sum, asset) => sum + asset.valueKrw, 0);
   const dates = simulationDates(startDate, safeEndDate, assetRows, incomeEvents);
-  const points = dates.map((date) => {
+  const rawPoints = dates.map((date) => {
     const incomeToDate = incomeEvents.filter((event) => event.date <= date);
     const lockedAssets = assetRows.filter((asset) => asset.availableFrom === null || asset.availableFrom > date);
     const lockedIncomes = incomeToDate.filter((event) => event.availableFrom === null || event.availableFrom > date);
@@ -4571,9 +5695,12 @@ function buildSimulation(
     };
   });
 
+  const points = monthlySimulationPoints(rawPoints);
   const finalPoint =
     points.at(-1) ?? {
       date: safeEndDate,
+      periodStartDate: safeEndDate,
+      periodEndDate: safeEndDate,
       totalValueKrw: startingAssetsKrw,
       liquidValueKrw: assetRows
         .filter((asset) => asset.availableFrom !== null && asset.availableFrom <= safeEndDate)
@@ -4600,6 +5727,27 @@ function buildSimulation(
     cumulativeIncomeKrw: finalPoint.cumulativeIncomeKrw,
     assetRows
   };
+}
+
+function monthlySimulationPoints(points: SimulationPoint[]) {
+  return groupSimulationPointsByMonth(points).map(({ periodStartDate, periodEndDate, representative, points: periodPoints }) => {
+    const newIncomes = periodPoints.flatMap((point) => point.detail.newIncomes);
+    const releasedAssets = periodPoints.flatMap((point) => point.detail.releasedAssets);
+    const releasedIncomes = periodPoints.flatMap((point) => point.detail.releasedIncomes);
+
+    return {
+      ...representative,
+      periodStartDate,
+      periodEndDate,
+      incomeKrw: periodPoints.reduce((sum, point) => sum + point.incomeKrw, 0),
+      detail: {
+        ...representative.detail,
+        newIncomes,
+        releasedAssets,
+        releasedIncomes
+      }
+    };
+  });
 }
 
 function simulationIncomeInputFromForm(
@@ -4732,11 +5880,6 @@ function simulationDates(
   return Array.from(dates).sort();
 }
 
-function assetSimulationAvailableFrom(asset: AssetValuation) {
-  const dates = [asset.effectiveLiquidFrom, asset.type === "bond" ? asset.maturityDate : null].filter((date): date is string => Boolean(date));
-  return dates.length ? dates.sort().at(-1) ?? null : asset.valuationDate;
-}
-
 function simulationIncomeAvailableFrom(income: SimulationIncome, accountById: Map<string, Account>, incomeDate: string) {
   if (income.availability === "unavailable") return null;
   const incomeUnlockDate = income.availability === "unlock_date" ? income.unlockDate ?? null : incomeDate;
@@ -4843,12 +5986,12 @@ function simulationLockedItemMeta(item: SimulationLockedItem) {
   return `${accountText}${item.availableFrom ? `${item.availableFrom} 이후 가능` : "기간 내 현금화 불가"}`;
 }
 
-function aggregateSimulationLockedItems(items: SimulationLockedItem[]) {
+function aggregateSimulationLockedItems(items: Array<Omit<SimulationLockedItem, "key">>) {
   const grouped = items.reduce<Map<string, SimulationLockedItem>>((acc, item) => {
     const key = `${item.reason}:${item.id}:${item.availableFrom ?? "unavailable"}`;
     const existing = acc.get(key);
     if (!existing) {
-      acc.set(key, { ...item });
+      acc.set(key, { ...item, key });
       return acc;
     }
 
@@ -5111,7 +6254,7 @@ function assetPayload(form: AssetForm) {
 
   return {
     ...payload,
-    liquidFrom: isSaleRestricted ? form.liquidFrom : form.valuationDate,
+    liquidFrom: liquidFromForSaleRestrictionForm(form),
     ticker: form.ticker.trim() || null,
     quantity: toNumberOrNull(form.quantity),
     averageCost: toNumberOrNull(form.averageCost),
@@ -5131,7 +6274,7 @@ function assetPayload(form: AssetForm) {
   };
 }
 
-function assetLinkagePayload(asset: AssetValuation, form: AssetForm) {
+function assetLinkagePayload(asset: AssetValuation, form: AssetForm, updateSaleRestriction = false) {
   const isKrwAsset = form.currency === "KRW" && form.market !== "other";
 
   return {
@@ -5147,7 +6290,7 @@ function assetLinkagePayload(asset: AssetValuation, form: AssetForm) {
     valuationDate: asset.valuationDate,
     purchaseFxRateToKrw: isKrwAsset ? 1 : Number(form.purchaseFxRateToKrw || asset.purchaseFxRateToKrw || 1),
     fxRateToKrw: isKrwAsset ? 1 : Number(form.fxRateToKrw || asset.fxRateToKrw || 1),
-    liquidFrom: asset.liquidFrom,
+    liquidFrom: updateSaleRestriction ? liquidFromForSaleRestrictionLot(asset, form) : asset.liquidFrom,
     maturityDate: asset.maturityDate,
     maturityAmount: asset.maturityAmount,
     maturityCurrency: asset.maturityCurrency,
@@ -5222,7 +6365,9 @@ function dividendTransactionPayload(form: AssetForm) {
   };
 }
 
-function formFromAsset(asset: AssetValuation): AssetForm {
+function formFromAsset(asset: AssetValuation, lots: AssetValuation[] = [asset]): AssetForm {
+  const saleRestriction = assetSaleRestrictionFormState(lots);
+
   return {
     accountId: asset.accountId,
     type: asset.type,
@@ -5236,8 +6381,8 @@ function formFromAsset(asset: AssetValuation): AssetForm {
     valuationDate: asset.valuationDate,
     purchaseFxRateToKrw: asset.purchaseFxRateToKrw.toString(),
     fxRateToKrw: asset.fxRateToKrw.toString(),
-    isSaleRestricted: asset.liquidFrom > asset.valuationDate,
-    liquidFrom: asset.liquidFrom,
+    isSaleRestricted: saleRestriction.isSaleRestricted,
+    liquidFrom: saleRestriction.liquidFrom || asset.liquidFrom,
     maturityDate: asset.maturityDate ?? "",
     maturityAmount: asset.maturityAmount?.toString() ?? "",
     maturityCurrency: asset.maturityCurrency ?? asset.currency,
@@ -5270,24 +6415,35 @@ function formFromSelectedPosition(form: AssetForm, positions: AssetPosition[], p
   };
 }
 
-function formFromTransaction(transaction: AssetTransaction, positions: AssetPosition[], accounts: Account[]): AssetForm {
+function formFromTransaction(transaction: AssetTransaction, positions: AssetPosition[], accounts: Account[], assets: AssetValuation[]): AssetForm {
+  const linkedAsset = transaction.assetId ? assets.find((asset) => asset.id === transaction.assetId) ?? null : null;
   const position =
     positions.find((item) => item.positionKey === transaction.positionKey) ??
     positions.find((item) => item.lotIds.includes(transaction.assetId ?? ""));
 
-  const base = position ? formFromSelectedPosition(emptyAssetForm, positions, position.positionKey) : emptyAssetForm;
+  const base = transaction.transactionType === "buy" && linkedAsset
+    ? formFromAsset(linkedAsset)
+    : position
+      ? formFromSelectedPosition(emptyAssetForm, positions, position.positionKey)
+      : emptyAssetForm;
   return {
     ...base,
     accountId: transaction.accountId || base.accountId || chooseAccountId(accounts),
-    name: position?.name ?? transaction.assetName ?? "",
-    ticker: position?.ticker ?? transaction.ticker ?? "",
+    type: linkedAsset?.type ?? position?.type ?? base.type,
+    market: linkedAsset?.market ?? position?.market ?? base.market,
+    name: linkedAsset?.name ?? position?.name ?? transaction.assetName ?? "",
+    ticker: linkedAsset?.ticker ?? position?.ticker ?? transaction.ticker ?? "",
     currency: transaction.currency,
     quantity: transaction.quantity?.toString() ?? "",
     averageCost: transaction.transactionType === "buy" ? transaction.price?.toString() ?? "" : base.averageCost,
     currentValue:
-      transaction.transactionType === "dividend" ? transaction.amount?.toString() ?? "" : transaction.price?.toString() ?? "",
+      transaction.transactionType === "buy"
+        ? linkedAsset?.currentValue?.toString() ?? transaction.price?.toString() ?? ""
+        : transaction.transactionType === "dividend"
+          ? transaction.amount?.toString() ?? ""
+          : transaction.price?.toString() ?? "",
     valuationDate: transaction.transactionDate,
-    fxRateToKrw: transaction.fxRateToKrw.toString(),
+    fxRateToKrw: transaction.transactionType === "buy" ? linkedAsset?.fxRateToKrw.toString() ?? transaction.fxRateToKrw.toString() : transaction.fxRateToKrw.toString(),
     purchaseFxRateToKrw:
       transaction.transactionType === "buy" ? transaction.fxRateToKrw.toString() : base.purchaseFxRateToKrw,
     liquidFrom: base.liquidFrom || transaction.transactionDate,
@@ -5369,6 +6525,21 @@ function formatKrw(value: number) {
   }).format(value);
 }
 
+function formatKrwThousands(value: number) {
+  if (Math.abs(value) < 1000) {
+    return formatKrw(value);
+  }
+
+  const sign = value < 0 ? "-" : "";
+  const thousands = Math.round(Math.abs(value) / 1000);
+  return `${sign}₩${thousands.toLocaleString("ko-KR")}k`;
+}
+
+function formatSignedKrwThousands(value: number) {
+  if (value > 0) return `+${formatKrwThousands(value)}`;
+  return formatKrwThousands(value);
+}
+
 function formatUsd(value: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -5415,9 +6586,31 @@ function formatQuantity(value: number) {
   return value.toLocaleString("ko-KR", { maximumFractionDigits: 6 });
 }
 
+function quantityInputValue(value: number) {
+  return roundNumber(value, 6).toString();
+}
+
 function formatDisplayDate(value: string) {
   const [year, month, day] = value.split("-");
   return `${year}.${month}.${day}`;
+}
+
+function formatDisplayDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function formatDisplayMonth(value: string) {
+  const [year, month] = value.split("-");
+  return `${year}.${month}`;
 }
 
 function shiftDate(value: string, days: number) {

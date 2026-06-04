@@ -10,6 +10,7 @@ import type {
   AssetTransaction,
   AssetValuation,
   AssetWithAccount,
+  DashboardSnapshotPayload,
   FxRateHistory,
   HistoryPoint,
   PriceSource,
@@ -849,6 +850,37 @@ export async function updateAssetPrice(input: {
 
 export async function markAssetPriceError(id: string, message: string): Promise<void> {
   await pool.query("UPDATE asset_items SET last_price_error = $2 WHERE id = $1", [id, message]);
+}
+
+export async function saveDashboardSnapshot(
+  targetDate: string,
+  payload: DashboardSnapshotPayload
+): Promise<{ targetDate: string; payload: DashboardSnapshotPayload; syncedAt: string }> {
+  const result = await pool.query<{ targetDate: string; payload: DashboardSnapshotPayload; syncedAt: string }>(
+    `INSERT INTO dashboard_snapshots (snapshot_key, target_date, payload)
+     VALUES ('dashboard', $1, $2::jsonb)
+     ON CONFLICT (snapshot_key, target_date)
+     DO UPDATE SET
+       payload = EXCLUDED.payload,
+       synced_at = now()
+     RETURNING target_date::text AS "targetDate", payload, synced_at AS "syncedAt"`,
+    [targetDate, JSON.stringify(payload)]
+  );
+  return result.rows[0];
+}
+
+export async function getDashboardSnapshot(
+  targetDate: string
+): Promise<{ targetDate: string; payload: DashboardSnapshotPayload; syncedAt: string } | null> {
+  const result = await pool.query<{ targetDate: string; payload: DashboardSnapshotPayload; syncedAt: string }>(
+    `SELECT target_date::text AS "targetDate", payload, synced_at AS "syncedAt"
+     FROM dashboard_snapshots
+     WHERE snapshot_key = 'dashboard'
+       AND target_date = $1
+     LIMIT 1`,
+    [targetDate]
+  );
+  return result.rows[0] ?? null;
 }
 
 export async function saveAssetSnapshot(asset: AssetWithAccount): Promise<void> {

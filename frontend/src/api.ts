@@ -3,6 +3,7 @@ import type {
   AssetMarket,
   AssetPosition,
   AssetTransaction,
+  DashboardData,
   FxRateResponse,
   HistoryResponse,
   PriceHistoryRefreshResponse,
@@ -21,6 +22,14 @@ const apiBase =
 
 export async function fetchAccounts(): Promise<Account[]> {
   return request("/api/accounts");
+}
+
+export async function fetchDashboard(date: string): Promise<DashboardData> {
+  return request(`/api/dashboard?date=${encodeURIComponent(date)}`);
+}
+
+export async function fetchDashboardSnapshot(date: string): Promise<DashboardData | null> {
+  return (await request(`/api/dashboard/snapshot?date=${encodeURIComponent(date)}`)) ?? null;
 }
 
 export async function createAccount(input: {

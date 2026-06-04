@@ -255,3 +255,13 @@ CREATE TABLE IF NOT EXISTS asset_transaction_cash_links (
 );
 
 CREATE INDEX IF NOT EXISTS asset_transaction_cash_links_asset_id_idx ON asset_transaction_cash_links(asset_id);
+
+CREATE TABLE IF NOT EXISTS dashboard_snapshots (
+  snapshot_key text NOT NULL,
+  target_date date NOT NULL,
+  payload jsonb NOT NULL,
+  synced_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (snapshot_key, target_date)
+);
+
+CREATE INDEX IF NOT EXISTS dashboard_snapshots_synced_at_idx ON dashboard_snapshots(synced_at DESC);
