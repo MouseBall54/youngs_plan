@@ -20,7 +20,7 @@ beforeAll(async () => {
 
   const schemaClient = new pg.Client({ connectionString: databaseUrl });
   await schemaClient.connect();
-  await schemaClient.query(readFileSync(resolve(process.cwd(), "../db/schema.sql"), "utf8"));
+  await schemaClient.query(readSchemaSql());
   await schemaClient.end();
 
   process.env.DATABASE_URL = databaseUrl;
@@ -157,6 +157,45 @@ describe("asset transactions", () => {
     expect(await db.transactionTotalsUntil("2026-01-10")).toMatchObject({ dividendIncomeKrw: 10 });
   });
 
+  it("keeps transaction ids when updates succeed", async () => {
+    const account = await db.createAccount({ name: "Brokerage" });
+    const buy = await db.createTransaction(buyInput(account.id, { name: "Original", ticker: "AAA", quantity: 10 }));
+    const updatedBuy = await db.updateTransaction(
+      buy.id,
+      buyInput(account.id, { name: "Updated", ticker: "BBB", quantity: 12, price: 150 })
+    );
+
+    expect(updatedBuy?.id).toBe(buy.id);
+    expect(updatedBuy?.assetName).toBe("Updated");
+
+    const sell = await db.createTransaction({
+      transactionType: "sell",
+      positionKey: updatedBuy?.positionKey ?? "",
+      quantity: 3,
+      price: 200,
+      currency: "KRW",
+      fxRateToKrw: 1,
+      transactionDate: "2026-01-10"
+    });
+    const updatedSell = await db.updateTransaction(sell.id, {
+      transactionType: "sell",
+      positionKey: updatedBuy?.positionKey ?? "",
+      quantity: 4,
+      price: 200,
+      currency: "KRW",
+      fxRateToKrw: 1,
+      transactionDate: "2026-01-10"
+    });
+
+    const transactions = await db.listTransactions();
+    const [{ quantity }] = (
+      await db.pool.query<{ quantity: number }>("SELECT quantity::float AS quantity FROM asset_items WHERE id = $1", [updatedBuy?.assetId])
+    ).rows;
+    expect(updatedSell?.id).toBe(sell.id);
+    expect(transactions.map((transaction) => transaction.id)).toEqual(expect.arrayContaining([buy.id, sell.id]));
+    expect(quantity).toBe(8);
+  });
+
   it("uses FIFO lots for sell gains and restores partial sells on delete", async () => {
     const account = await db.createAccount({ name: "Brokerage" });
     const firstBuy = await db.createTransaction(buyInput(account.id, { quantity: 10, price: 100, ticker: "AAA" }));
@@ -228,6 +267,28 @@ describe("asset transactions", () => {
     const rows = await db.listTransactions();
     expect(rows.map((transaction) => transaction.id)).not.toContain(zeroBuy.id);
     expect(rows.map((transaction) => transaction.id)).toContain("dependent-dividend");
+  });
+
+  it("does not keep generated initial buys when a real buy transaction exists for the asset", async () => {
+    const account = await db.createAccount({ name: "Brokerage" });
+    const realBuy = await db.createTransaction(buyInput(account.id, { ticker: "AAA" }));
+    const legacyAsset = await db.createAsset(assetInput(account.id, { name: "Legacy", type: "stock", quantity: 5, averageCost: 200 }));
+
+    await db.pool.query(
+      `INSERT INTO asset_transactions (
+         id, asset_id, position_key, account_id, transaction_type, transaction_date, quantity, price, amount, currency, fx_rate_to_krw, notes
+       )
+       VALUES ($1, $2, $3, $4, 'buy', '2026-01-01', 10, 100, 1000, 'KRW', 1, '기존 자산 초기 매수 이력')`,
+      [`initial-buy-${realBuy.assetId}`, realBuy.assetId, realBuy.positionKey, account.id]
+    );
+
+    await db.pool.query(readSchemaSql());
+
+    const transactions = await db.listTransactions();
+    const transactionIds = transactions.map((transaction) => transaction.id);
+    expect(transactionIds).toContain(realBuy.id);
+    expect(transactionIds).not.toContain(`initial-buy-${realBuy.assetId}`);
+    expect(transactionIds).toContain(`initial-buy-${legacyAsset.id}`);
   });
 
   it("reconstructs quantity history from buy and sell lot events", async () => {
@@ -519,6 +580,10 @@ function loadDatabaseUrl() {
   if (!line) throw new Error("DATABASE_URL is not set.");
 
   return line.slice("DATABASE_URL=".length).trim().replace(/^["']|["']$/g, "");
+}
+
+function readSchemaSql() {
+  return readFileSync(resolve(process.cwd(), "../db/schema.sql"), "utf8");
 }
 
 function withSearchPath(url: string, schema: string) {

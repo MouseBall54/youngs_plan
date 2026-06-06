@@ -997,7 +997,8 @@ export async function createTransaction(input: {
 
 async function createTransactionWithClient(
   client: pg.PoolClient,
-  input: Parameters<typeof createTransaction>[0]
+  input: Parameters<typeof createTransaction>[0],
+  transactionId?: string
 ): Promise<AssetTransaction> {
   let transaction: AssetTransaction;
 
@@ -1028,6 +1029,7 @@ async function createTransactionWithClient(
       notes: input.notes ?? null
     });
     transaction = await insertTransaction(client, {
+      id: transactionId,
       assetId: asset.id,
       positionKey: assetPositionKey(asset),
       accountId: asset.accountId,
@@ -1071,6 +1073,7 @@ async function createTransactionWithClient(
       const lotDeductions = await applyFifoSellLots(client, lots, sellQuantity, sellPrice, input.transactionDate, fxRate);
       const realizedGainKrw = lotDeductions.reduce((sum, lot) => sum + lot.realizedGainKrw, 0);
       transaction = await insertTransaction(client, {
+        id: transactionId,
         assetId: representativeAsset.id,
         positionKey: position.positionKey,
         accountId: representativeAsset.accountId,
@@ -1093,6 +1096,7 @@ async function createTransactionWithClient(
         throw new Error("배당금은 0보다 커야 합니다.");
       }
       transaction = await insertTransaction(client, {
+        id: transactionId,
         assetId: representativeAsset.id,
         positionKey: position.positionKey,
         accountId: representativeAsset.accountId,
@@ -1315,7 +1319,7 @@ export async function updateTransaction(
       await client.query("ROLLBACK");
       return null;
     }
-    const transaction = await createTransactionWithClient(client, input);
+    const transaction = await createTransactionWithClient(client, input, id);
     await client.query("COMMIT");
     return transaction;
   } catch (error) {
@@ -1382,6 +1386,7 @@ export async function processMaturedBonds(targetDate: string): Promise<AssetTran
 async function insertTransaction(
   client: pg.PoolClient,
   input: {
+    id?: string;
     assetId: string | null;
     positionKey?: string | null;
     accountId: string;
@@ -1397,7 +1402,7 @@ async function insertTransaction(
     notes: string | null;
   }
 ): Promise<AssetTransaction> {
-  const id = randomUUID();
+  const id = input.id ?? randomUUID();
   const result = await client.query<AssetTransaction>(
     `WITH inserted AS (
      INSERT INTO asset_transactions (

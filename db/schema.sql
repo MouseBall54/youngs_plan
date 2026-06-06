@@ -191,6 +191,17 @@ FROM asset_items a
 WHERE t.asset_id = a.id
   AND t.position_key IS NULL;
 
+DELETE FROM asset_transactions t
+WHERE t.asset_id IS NOT NULL
+  AND t.id = 'initial-buy-' || t.asset_id
+  AND EXISTS (
+    SELECT 1
+    FROM asset_transactions existing_buy
+    WHERE existing_buy.asset_id = t.asset_id
+      AND existing_buy.transaction_type = 'buy'
+      AND existing_buy.id <> t.id
+  );
+
 INSERT INTO asset_transactions (
   id,
   asset_id,
@@ -228,7 +239,8 @@ FROM asset_items a
 WHERE NOT EXISTS (
   SELECT 1
   FROM asset_transactions t
-  WHERE t.id = 'initial-buy-' || a.id
+  WHERE t.asset_id = a.id
+    AND t.transaction_type = 'buy'
 );
 
 CREATE INDEX IF NOT EXISTS asset_transactions_asset_id_idx ON asset_transactions(asset_id);

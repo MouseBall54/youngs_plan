@@ -3252,6 +3252,23 @@ button:disabled {
   flex-basis: 36px;
 }
 
+.transactionMoreButton {
+  width: 100%;
+  border: 1px solid #cfd8df;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #17456b;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.transactionMoreButton:hover {
+  background: #f4f7fa;
+}
+
 .transactionWarningBadge {
   display: inline-flex;
   width: fit-content;

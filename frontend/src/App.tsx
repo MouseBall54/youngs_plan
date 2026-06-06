@@ -92,6 +92,11 @@ const rangeLabels: Record<string, string> = {
 };
 
 const historyCacheKey = (date: string, range: string) => `${date}:${range}`;
+const dashboardStorageKey = "youngs-plan-dashboard";
+const dashboardStorageVersion = 2;
+const dashboardStorageHistoryRange = "1y";
+const dashboardStorageTransactionLimit = 200;
+const transactionListPageSize = 40;
 
 const transactionLabels: Record<TransactionType, string> = {
   buy: "매수",
@@ -212,6 +217,18 @@ type DashboardIncomePeriodRow = {
   rate: number | null;
 };
 
+type DashboardLoadOptions = {
+  refreshLatest?: boolean;
+  allowCachedData?: boolean;
+  showFeedback?: boolean;
+};
+
+type DashboardStorageEnvelope = {
+  version?: number;
+  savedAt?: string;
+  data: DashboardData;
+};
+
 type MetricDetailFormat = "money" | "signed";
 
 type MetricDetailRow = {
@@ -327,21 +344,25 @@ const emptyAccountForm = (): AccountForm => ({
 });
 
 export function App() {
+  const [initialDashboard] = useState(() => readDashboardStorage(today));
   const [tab, setTab] = useState<Tab>("overview");
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [positions, setPositions] = useState<AssetPosition[]>([]);
-  const [history, setHistory] = useState<HistoryPoint[]>([]);
-  const [comparisonHistory, setComparisonHistory] = useState<HistoryPoint[]>([]);
-  const [transactions, setTransactions] = useState<AssetTransaction[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>(() => initialDashboard?.accounts ?? []);
+  const [summary, setSummary] = useState<Summary | null>(() => initialDashboard?.summary ?? null);
+  const [positions, setPositions] = useState<AssetPosition[]>(() => initialDashboard?.positions ?? []);
+  const [history, setHistory] = useState<HistoryPoint[]>(() =>
+    initialDashboard ? historyPointsForRange(initialDashboard.history, initialDashboard.date, "1m") : []
+  );
+  const [comparisonHistory, setComparisonHistory] = useState<HistoryPoint[]>(() => initialDashboard?.history ?? []);
+  const [transactions, setTransactions] = useState<AssetTransaction[]>(() => initialDashboard?.transactions ?? []);
   const [targetDate, setTargetDate] = useState(today);
   const [range, setRange] = useState("1m");
   const [trendView, setTrendView] = useState("chart");
-  const [isHistoryUpdating, setIsHistoryUpdating] = useState(true);
+  const [isHistoryUpdating, setIsHistoryUpdating] = useState(() => !initialDashboard);
   const [status, setStatus] = useState("");
   const [feedback, setFeedback] = useState("");
-  const [dashboardSyncedAt, setDashboardSyncedAt] = useState<string | null>(null);
-  const [isUsingSnapshot, setIsUsingSnapshot] = useState(false);
+  const [dashboardSyncedAt, setDashboardSyncedAt] = useState<string | null>(() => initialDashboard?.syncedAt ?? null);
+  const [isUsingSnapshot, setIsUsingSnapshot] = useState(() => Boolean(initialDashboard));
+  const [isRefreshingDashboard, setIsRefreshingDashboard] = useState(false);
   const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [isSavingAsset, setIsSavingAsset] = useState(false);
   const [isRefreshingPrices, setIsRefreshingPrices] = useState(false);
@@ -371,13 +392,21 @@ export function App() {
   const [accountForm, setAccountForm] = useState<AccountForm>(emptyAccountForm());
   const [assetForm, setAssetForm] = useState<AssetForm>(emptyAssetForm);
   const tradePanelRef = useRef<HTMLElement | null>(null);
-  const historyCacheRef = useRef(new Map<string, HistoryPoint[]>());
+  const historyCacheRef = useRef(
+    new Map<string, HistoryPoint[]>(
+      initialDashboard
+        ? [
+            [historyCacheKey(initialDashboard.date, "all"), initialDashboard.history],
+            [historyCacheKey(initialDashboard.date, "1m"), historyPointsForRange(initialDashboard.history, initialDashboard.date, "1m")]
+          ]
+        : []
+    )
+  );
   const activeHistoryKeyRef = useRef(historyCacheKey(today, "1m"));
-  const fullHistoryRef = useRef<HistoryPoint[]>([]);
-  const fullHistoryDateRef = useRef(today);
-  const isFullHistoryLoadedRef = useRef(false);
+  const fullHistoryRef = useRef<HistoryPoint[]>(initialDashboard?.history ?? []);
+  const fullHistoryDateRef = useRef(initialDashboard?.date ?? today);
+  const isFullHistoryLoadedRef = useRef(Boolean(initialDashboard));
   const historyRequestIdRef = useRef(0);
-  const hasAutoRefreshedPricesRef = useRef(false);
   const isPriceRefreshInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -419,44 +448,99 @@ export function App() {
     setActiveOverviewMetric((current) => (current === metricKey ? null : metricKey));
   }
 
-  async function load(preferredAccountId?: string) {
+  async function load(preferredAccountId?: string, options: DashboardLoadOptions = {}) {
+    const { refreshLatest = false, allowCachedData = true, showFeedback = false } = options;
     const requestedDate = targetDate;
     const requestedRange = range;
     const requestedHistoryKey = historyCacheKey(requestedDate, requestedRange);
     const requestId = ++historyRequestIdRef.current;
-    let snapshotApplied = false;
+    const displayedDateBeforeLoad = summary?.date ?? null;
+    const isShowingDifferentDateBeforeLoad = displayedDateBeforeLoad !== null && displayedDateBeforeLoad !== requestedDate;
+    let retainedDataAvailable = summary !== null;
+    let requestedDataApplied = false;
+    let latestRequested = false;
 
     try {
-      setStatus("");
+      setStatus(
+        isShowingDifferentDateBeforeLoad
+          ? `${formatDisplayDate(requestedDate)} 데이터를 불러오는 중입니다. 현재 화면은 ${formatDisplayDate(
+              displayedDateBeforeLoad ?? requestedDate
+            )} 저장 데이터입니다.`
+          : ""
+      );
+      if (showFeedback) {
+        setFeedback("데이터 새로고침 중입니다.");
+      }
+      if (refreshLatest) {
+        setIsRefreshingDashboard(true);
+      }
       setIsHistoryUpdating(true);
-      historyCacheRef.current.clear();
-      fullHistoryRef.current = [];
-      isFullHistoryLoadedRef.current = false;
+      if (!retainedDataAvailable || fullHistoryDateRef.current !== requestedDate) {
+        historyCacheRef.current.clear();
+        fullHistoryRef.current = [];
+        isFullHistoryLoadedRef.current = false;
+      }
       activeHistoryKeyRef.current = requestedHistoryKey;
-      const latestDataPromise: Promise<{ data: DashboardData } | { error: unknown }> = fetchDashboard(requestedDate)
-        .then((data) => ({ data }))
-        .catch((error: unknown) => ({ error }));
 
-      const snapshot = await fetchDashboardSnapshot(requestedDate).catch(() => null);
-      if (snapshot) {
-        snapshotApplied = applyDashboardData(snapshot, preferredAccountId, requestedDate, requestId);
+      if (allowCachedData) {
+        const cached = readDashboardStorage(requestedDate);
+        if (cached) {
+          requestedDataApplied = applyDashboardData(cached, preferredAccountId, requestedDate, requestId);
+          retainedDataAvailable = requestedDataApplied || retainedDataAvailable;
+          if (requestedDataApplied) {
+            setStatus("");
+            setIsHistoryUpdating(false);
+          }
+        }
+
+        const snapshot = await fetchDashboardSnapshot(requestedDate).catch(() => null);
+        if (snapshot) {
+          requestedDataApplied = applyDashboardData(snapshot, preferredAccountId, requestedDate, requestId) || requestedDataApplied;
+          retainedDataAvailable = requestedDataApplied || retainedDataAvailable;
+          if (requestedDataApplied) {
+            setStatus("");
+            setIsHistoryUpdating(false);
+          }
+        }
       }
 
-      const latestDataResult = await latestDataPromise;
-      if ("error" in latestDataResult) {
-        throw latestDataResult.error;
+      if (historyRequestIdRef.current !== requestId || !activeHistoryKeyRef.current.startsWith(`${requestedDate}:`)) {
+        return;
       }
 
-      const latestApplied = applyDashboardData(latestDataResult.data, preferredAccountId, requestedDate, requestId);
+      if (!refreshLatest && requestedDataApplied) {
+        return;
+      }
+
+      latestRequested = true;
+      if (!retainedDataAvailable) {
+        setStatus("저장된 데이터가 없어 최신 데이터를 불러오는 중입니다.");
+      }
+      const latestData = await fetchDashboard(requestedDate);
+      const latestApplied = applyDashboardData(latestData, preferredAccountId, requestedDate, requestId);
       if (latestApplied) {
-        void refreshPricesAfterInitialLoad(latestDataResult.data, requestedDate, requestId, preferredAccountId);
+        setStatus("");
+        if (showFeedback) {
+          setFeedback("데이터 새로고침 완료");
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "데이터를 불러오지 못했습니다.";
-      setStatus(snapshotApplied ? `최신 데이터 갱신 실패: ${message}` : message);
+      setStatus(
+        isShowingDifferentDateBeforeLoad && !requestedDataApplied
+          ? `${formatDisplayDate(requestedDate)} 데이터를 불러오지 못했습니다: ${message}. 현재는 ${formatDisplayDate(
+              displayedDateBeforeLoad ?? requestedDate
+            )} 데이터를 표시 중입니다.`
+          : retainedDataAvailable
+            ? `최신 데이터 갱신 실패: ${message}`
+            : message
+      );
     } finally {
       if (historyRequestIdRef.current === requestId && activeHistoryKeyRef.current.startsWith(`${requestedDate}:`)) {
         setIsHistoryUpdating(false);
+      }
+      if ((latestRequested || refreshLatest) && historyRequestIdRef.current === requestId) {
+        setIsRefreshingDashboard(false);
       }
     }
   }
@@ -484,26 +568,8 @@ export function App() {
       ...current,
       accountId: preferredAccountId ?? current.accountId
     }));
+    writeDashboardStorage(data);
     return true;
-  }
-
-  async function refreshPricesAfterInitialLoad(
-    data: DashboardData,
-    requestedDate: string,
-    requestId: number,
-    preferredAccountId?: string
-  ) {
-    if (hasAutoRefreshedPricesRef.current || requestedDate !== today || !data.summary.assets.some((asset) => asset.ticker)) {
-      return;
-    }
-
-    hasAutoRefreshedPricesRef.current = true;
-
-    try {
-      await refreshCurrentPrices({ requestedDate, requestId, preferredAccountId, silent: true });
-    } catch {
-      // 스냅샷과 최신 DB 데이터는 이미 표시되어 있으므로 자동 현재가 갱신 실패는 화면을 비우지 않습니다.
-    }
   }
 
   useEffect(() => {
@@ -635,6 +701,8 @@ export function App() {
     [summary, transactions, targetDate]
   );
   const activeOverviewDetail = activeOverviewMetric ? overviewMetricDetails.get(activeOverviewMetric) ?? null : null;
+  const displayedDashboardDate = summary?.date ?? null;
+  const isShowingDifferentDate = displayedDashboardDate !== null && displayedDashboardDate !== targetDate;
 
   useEffect(() => {
     writeSimulationStorage({
@@ -650,6 +718,11 @@ export function App() {
 
   async function submitAccount(event: FormEvent) {
     event.preventDefault();
+    if (!accountForm.name.trim()) {
+      setFeedback("");
+      setStatus("계좌명을 입력해 주세요.");
+      return;
+    }
     if (accountForm.liquidityRestricted && !accountForm.liquidityUnlockDate) {
       setFeedback("");
       setStatus("현금화 제한 계좌는 해지 가능일을 입력해 주세요.");
@@ -667,7 +740,7 @@ export function App() {
       setEditingAccountId(null);
       setAccountForm(emptyAccountForm());
       setFeedback(`계좌 "${account.name}" ${editingAccountId ? "수정" : "등록"} 완료`);
-      await load(account.id);
+      await load(account.id, { refreshLatest: true, allowCachedData: false });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "계좌를 저장하지 못했습니다.");
     } finally {
@@ -717,7 +790,7 @@ export function App() {
       setEditingTransactionId(null);
       setIsTradePanelOpen(false);
       setFeedback(`${transactionLabels[transactionMode]} ${editingAssetId || editingTransactionId ? "수정" : "등록"} 완료`);
-      await load();
+      await load(undefined, { refreshLatest: true, allowCachedData: false });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "자산을 저장하지 못했습니다.");
     } finally {
@@ -731,7 +804,7 @@ export function App() {
       setStatus("");
       await deleteAsset(asset.id);
       setFeedback(`자산 "${asset.name}" 삭제 완료`);
-      await load();
+      await load(undefined, { refreshLatest: true, allowCachedData: false });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "자산을 삭제하지 못했습니다.");
     }
@@ -744,7 +817,7 @@ export function App() {
       await deleteAccount(account.id);
       setFeedback(`계좌 "${account.name}" 삭제 완료`);
       setEditingAccountId(null);
-      await load();
+      await load(undefined, { refreshLatest: true, allowCachedData: false });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "계좌를 삭제하지 못했습니다.");
     }
@@ -815,7 +888,7 @@ export function App() {
       const savedCount = result.results.reduce((sum, item) => sum + item.count, 0) + (result.fxResult?.count ?? 0);
       const failedText = summarizePriceHistoryFailures(result.results, result.fxResult);
       setFeedback(`과거 일별 시세 저장 완료: ${savedCount}건${failCount ? `, 실패 ${failCount}개${failedText}` : ""}`);
-      await load();
+      await load(undefined, { refreshLatest: true, allowCachedData: false });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "과거 일별 시세를 저장하지 못했습니다.");
     } finally {
@@ -935,7 +1008,7 @@ export function App() {
         setAssetForm(emptyAssetForm);
       }
       setFeedback("거래 삭제 완료");
-      await load();
+      await load(undefined, { refreshLatest: true, allowCachedData: false });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "거래를 삭제하지 못했습니다.");
     }
@@ -1123,12 +1196,13 @@ export function App() {
         <button
           className="iconButton headerRefreshButton"
           type="button"
-          onClick={() => void load()}
+          onClick={() => void load(undefined, { refreshLatest: true, allowCachedData: false, showFeedback: true })}
+          disabled={isRefreshingDashboard}
           aria-label="데이터 새로고침"
           title="데이터 새로고침"
         >
           <RefreshCw size={20} />
-          <span>데이터</span>
+          <span>{isRefreshingDashboard ? "갱신 중" : "데이터"}</span>
         </button>
       </header>
 
@@ -1168,8 +1242,20 @@ export function App() {
       {feedback && <Notice message={feedback} tone="success" onDismiss={() => setFeedback("")} />}
       {dashboardSyncedAt && (
         <div className={isUsingSnapshot ? "snapshotStatus" : "snapshotStatus live"} role="status">
-          <span>{isUsingSnapshot ? "최근 저장 데이터 표시 중" : "최신 데이터 표시 중"}</span>
-          <time dateTime={dashboardSyncedAt}>마지막 갱신 {formatDisplayDateTime(dashboardSyncedAt)}</time>
+          <span>
+            {isShowingDifferentDate
+              ? `${formatDisplayDate(displayedDashboardDate ?? targetDate)} 데이터 표시 중`
+              : isUsingSnapshot
+                ? "최근 저장 데이터 표시 중"
+                : "최신 데이터 표시 중"}
+          </span>
+          <time dateTime={dashboardSyncedAt}>
+            {isShowingDifferentDate
+              ? `${formatDisplayDate(targetDate)} 데이터 ${isHistoryUpdating ? "불러오는 중" : "대기 중"} · 마지막 갱신 ${formatDisplayDateTime(
+                  dashboardSyncedAt
+                )}`
+              : `마지막 갱신 ${formatDisplayDateTime(dashboardSyncedAt)}`}
+          </time>
         </div>
       )}
 
@@ -1485,9 +1571,8 @@ export function App() {
                 </button>
               )}
             </div>
-            <form className="compactForm" onSubmit={(event) => void submitAccount(event)}>
+            <form className="compactForm" noValidate onSubmit={(event) => void submitAccount(event)}>
               <input
-                required
                 name="accountName"
                 placeholder="계좌명"
                 value={accountForm.name}
@@ -1501,6 +1586,7 @@ export function App() {
               />
               <label className="toggleRow accountRestrictionToggle">
                 <input
+                  name="accountLiquidityRestricted"
                   type="checkbox"
                   checked={accountForm.liquidityRestricted}
                   onChange={(event) =>
@@ -3078,6 +3164,7 @@ function SimulationIncomeForm({
           <label className="toggleRow">
             계속 반복
             <input
+              name={`${type}RepeatsIndefinitely`}
               type="checkbox"
               checked={form.repeatsIndefinitely}
               onChange={(event) => onChange({ ...form, repeatsIndefinitely: event.target.checked })}
@@ -3737,6 +3824,11 @@ function TransactionList({
 }) {
   const [transactionFilter, setTransactionFilter] = useState<"all" | TransactionType>("all");
   const [accountFilter, setAccountFilter] = useState("all");
+  const [visibleTransactionCount, setVisibleTransactionCount] = useState(transactionListPageSize);
+
+  useEffect(() => {
+    setVisibleTransactionCount(transactionListPageSize);
+  }, [accountFilter, transactionFilter, transactions]);
 
   if (transactions.length === 0) {
     return <span className="emptyText">거래 이력이 없습니다.</span>;
@@ -3774,6 +3866,8 @@ function TransactionList({
     transactionFilter === "all"
       ? accountFilteredTransactions
       : accountFilteredTransactions.filter((transaction) => transaction.transactionType === transactionFilter);
+  const visibleTransactions = filteredTransactions.slice(0, visibleTransactionCount);
+  const remainingTransactionCount = filteredTransactions.length - visibleTransactions.length;
 
   return (
     <>
@@ -3793,7 +3887,7 @@ function TransactionList({
         </div>
         <label className="transactionAccountFilter">
           <span>계좌</span>
-          <select value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}>
+          <select name="transactionAccountFilter" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}>
             <option value="all">전체 계좌</option>
             {accountOptions.map((account) => (
               <option key={account.id} value={account.id}>
@@ -3805,43 +3899,50 @@ function TransactionList({
       </div>
       <div className="transactionList">
         {filteredTransactions.length === 0 && <span className="emptyText">선택한 조건의 거래가 없습니다.</span>}
-        {filteredTransactions.map((transaction) => {
-        const income =
-          transaction.transactionType === "dividend" ? transaction.dividendIncomeKrw : transaction.realizedGainKrw;
-        const displayAmount =
-          transaction.transactionType === "buy" || transaction.transactionType === "deposit"
-            ? formatKrw((transaction.amount ?? 0) * transaction.fxRateToKrw)
-            : formatSignedKrw(income);
-        const assetName = transaction.assetName ?? (transaction.transactionType === "deposit" ? "현금" : "자산");
-        const isZeroTrade = isZeroQuantityTrade(transaction);
-        return (
-          <article className={isZeroTrade ? "transactionItem warning" : "transactionItem"} key={transaction.id}>
-            <div>
-              <strong>
-                {transactionLabels[transaction.transactionType]} · {assetName}
-                {isZeroTrade && <em className="transactionWarningBadge">0주 거래 · 삭제 필요</em>}
-              </strong>
-              <span>
-                {transaction.transactionDate} · {transaction.accountName}
-                {transaction.quantity !== null ? ` · ${transaction.quantity.toLocaleString("ko-KR")}주` : ""}
-              </span>
-            </div>
-            <b className={gainClass(income)}>
-              {displayAmount}
-            </b>
-            <div className="rowActions">
-              {transaction.transactionType !== "maturity" && transaction.transactionType !== "deposit" && (
-                <button type="button" onClick={() => onEdit(transaction)} aria-label="거래 수정">
-                  <Pencil size={15} />
+        {visibleTransactions.map((transaction) => {
+          const income = transaction.transactionType === "dividend" ? transaction.dividendIncomeKrw : transaction.realizedGainKrw;
+          const displayAmount =
+            transaction.transactionType === "buy" || transaction.transactionType === "deposit"
+              ? formatKrw((transaction.amount ?? 0) * transaction.fxRateToKrw)
+              : formatSignedKrw(income);
+          const assetName = transaction.assetName ?? (transaction.transactionType === "deposit" ? "현금" : "자산");
+          const isZeroTrade = isZeroQuantityTrade(transaction);
+          return (
+            <article className={isZeroTrade ? "transactionItem warning" : "transactionItem"} key={transaction.id}>
+              <div>
+                <strong>
+                  {transactionLabels[transaction.transactionType]} · {assetName}
+                  {isZeroTrade && <em className="transactionWarningBadge">0주 거래 · 삭제 필요</em>}
+                </strong>
+                <span>
+                  {transaction.transactionDate} · {transaction.accountName}
+                  {transaction.quantity !== null ? ` · ${transaction.quantity.toLocaleString("ko-KR")}주` : ""}
+                </span>
+              </div>
+              <b className={gainClass(income)}>{displayAmount}</b>
+              <div className="rowActions">
+                {transaction.transactionType !== "maturity" && transaction.transactionType !== "deposit" && (
+                  <button type="button" onClick={() => onEdit(transaction)} aria-label="거래 수정">
+                    <Pencil size={15} />
+                  </button>
+                )}
+                <button type="button" onClick={() => onDelete(transaction)} aria-label="거래 삭제">
+                  <Trash2 size={15} />
                 </button>
-              )}
-              <button type="button" onClick={() => onDelete(transaction)} aria-label="거래 삭제">
-                <Trash2 size={15} />
-              </button>
-            </div>
-          </article>
-        );
+              </div>
+            </article>
+          );
         })}
+        {remainingTransactionCount > 0 && (
+          <button
+            className="transactionMoreButton"
+            type="button"
+            onClick={() => setVisibleTransactionCount((count) => count + transactionListPageSize)}
+          >
+            더 보기 {Math.min(transactionListPageSize, remainingTransactionCount).toLocaleString("ko-KR")}건 · 남은 거래{" "}
+            {remainingTransactionCount.toLocaleString("ko-KR")}건
+          </button>
+        )}
       </div>
     </>
   );
@@ -5906,6 +6007,108 @@ function simulationEndDateForRange(range: SimulationRange, startDate: string) {
   if (range === "1y") return addMonths(startDate, 12);
   if (range === "3y") return addMonths(startDate, 36);
   return addMonths(startDate, 12);
+}
+
+function readDashboardStorage(targetDate: string): DashboardData | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const stored = window.localStorage.getItem(dashboardStorageKey);
+    if (!stored) return null;
+
+    const parsed = JSON.parse(stored) as unknown;
+    const data =
+      isDashboardData(parsed)
+        ? parsed
+        : isDashboardStorageEnvelope(parsed)
+          ? parsed.data
+          : null;
+    if (!data || data.date !== targetDate) return null;
+
+    return {
+      ...data,
+      isSnapshot: true
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeDashboardStorage(data: DashboardData) {
+  if (typeof window === "undefined") return;
+
+  try {
+    const compactData = compactDashboardDataForStorage(data);
+    window.localStorage.setItem(
+      dashboardStorageKey,
+      JSON.stringify({
+        version: dashboardStorageVersion,
+        savedAt: new Date().toISOString(),
+        data: compactData
+      })
+    );
+  } catch {
+    // 캐시 저장 실패는 화면 데이터 표시를 막지 않습니다.
+  }
+}
+
+function compactDashboardDataForStorage(data: DashboardData): DashboardData {
+  return {
+    ...data,
+    history: historyPointsForRange(data.history, data.date, dashboardStorageHistoryRange),
+    transactions: data.transactions.slice(0, dashboardStorageTransactionLimit)
+  };
+}
+
+function isDashboardStorageEnvelope(value: unknown): value is DashboardStorageEnvelope {
+  return (
+    isObjectRecord(value) &&
+    (value.version === undefined || typeof value.version === "number") &&
+    (value.savedAt === undefined || typeof value.savedAt === "string") &&
+    isDashboardData(value.data)
+  );
+}
+
+function isDashboardData(value: unknown): value is DashboardData {
+  if (!isObjectRecord(value)) return false;
+  const data = value as Partial<DashboardData>;
+
+  return (
+    typeof data.date === "string" &&
+    Array.isArray(data.accounts) &&
+    isDashboardSummary(data.summary) &&
+    Array.isArray(data.positions) &&
+    Array.isArray(data.history) &&
+    Array.isArray(data.transactions) &&
+    typeof data.syncedAt === "string" &&
+    typeof data.isSnapshot === "boolean"
+  );
+}
+
+function isDashboardSummary(value: unknown): value is Summary {
+  if (!isObjectRecord(value)) return false;
+  const summary = value as Partial<Summary>;
+
+  return (
+    typeof summary.date === "string" &&
+    typeof summary.totalValueKrw === "number" &&
+    typeof summary.totalCostKrw === "number" &&
+    typeof summary.totalGainKrw === "number" &&
+    typeof summary.unrealizedGainKrw === "number" &&
+    typeof summary.realizedGainKrw === "number" &&
+    typeof summary.dividendIncomeKrw === "number" &&
+    typeof summary.totalIncomeKrw === "number" &&
+    typeof summary.liquidValueKrw === "number" &&
+    typeof summary.lockedValueKrw === "number" &&
+    typeof summary.liquidRatio === "number" &&
+    Array.isArray(summary.byTypeDetails) &&
+    Array.isArray(summary.byAccountDetails) &&
+    Array.isArray(summary.assets)
+  );
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function readSimulationStorage() {
