@@ -54,6 +54,7 @@ app.use("/api", (_req, res, next) => {
 const accountSchema = z.object({
   name: z.string().min(1),
   institution: z.string().optional().nullable(),
+  iconKey: z.string().trim().max(40).optional().nullable(),
   liquidityRestricted: z.coerce.boolean().default(false),
   liquidityUnlockDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   liquidityRestrictionReason: z.string().optional().nullable()

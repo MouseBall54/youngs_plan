@@ -9,6 +9,7 @@ export type Account = {
   id: string;
   name: string;
   institution: string | null;
+  iconKey: string | null;
   liquidityRestricted: boolean;
   liquidityUnlockDate: string | null;
   liquidityRestrictionReason: string | null;

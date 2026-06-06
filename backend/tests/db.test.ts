@@ -59,11 +59,13 @@ describe("asset transactions", () => {
     const account = await db.createAccount({
       name: "ISA",
       institution: "Brokerage",
+      iconKey: "brokerage",
       liquidityRestricted: true,
       liquidityUnlockDate: "2028-12-31",
       liquidityRestrictionReason: "ISA"
     });
 
+    expect(account.iconKey).toBe("brokerage");
     expect(account.liquidityRestricted).toBe(true);
     expect(account.liquidityUnlockDate).toBe("2028-12-31");
     expect(account.liquidityRestrictionReason).toBe("ISA");
@@ -71,11 +73,13 @@ describe("asset transactions", () => {
     const updated = await db.updateAccount(account.id, {
       name: "ISA",
       institution: "Brokerage",
+      iconKey: "pension",
       liquidityRestricted: false,
       liquidityUnlockDate: "2028-12-31",
       liquidityRestrictionReason: "ISA"
     });
 
+    expect(updated?.iconKey).toBe("pension");
     expect(updated?.liquidityRestricted).toBe(false);
     expect(updated?.liquidityUnlockDate).toBeNull();
     expect(updated?.liquidityRestrictionReason).toBeNull();

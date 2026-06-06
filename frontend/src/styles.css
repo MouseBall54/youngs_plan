@@ -3337,6 +3337,1124 @@ button:disabled {
   color: #17456b;
 }
 
+/* Design refresh: adapted from the Google reference dashboard without changing app behavior. */
+:root {
+  --primary: #041627;
+  --primary-strong: #0b1d2d;
+  --primary-container: #1a2b3c;
+  --positive: #006d37;
+  --positive-soft: #e4f8ec;
+  --negative: #ba1a1a;
+  --negative-soft: #ffdad6;
+  --warning: #9a6700;
+  --warning-soft: #fff3d6;
+  --neutral-900: #191c1d;
+  --neutral-700: #44474c;
+  --neutral-600: #6c757d;
+  --neutral-300: #c4c6cd;
+  --neutral-200: #e7e8e9;
+  --surface: #ffffff;
+  --surface-subtle: #f3f4f5;
+  color: var(--neutral-900);
+  background: #f8f9fa;
+}
+
+body {
+  background:
+    linear-gradient(180deg, #f8f9fa 0%, #eef1f4 100%);
+}
+
+.appShell {
+  width: min(100%, 1180px);
+  padding: 16px 20px 104px;
+}
+
+.appHeader {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  min-height: 64px;
+  margin: -16px -20px 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid rgba(196, 198, 205, 0.54);
+  background: rgba(248, 249, 250, 0.9);
+  backdrop-filter: blur(16px);
+}
+
+.appHeaderBrand,
+.appHeaderActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brandMark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--positive), #4ae183);
+  color: #ffffff;
+  box-shadow: 0 10px 24px rgba(0, 109, 55, 0.18);
+}
+
+.eyebrow {
+  color: var(--neutral-600);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+h1 {
+  color: var(--primary);
+  font-size: 1.35rem;
+  font-weight: 900;
+}
+
+.liveBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 8px;
+  padding: 0 9px;
+  background: rgba(107, 254, 156, 0.26);
+  color: var(--positive);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.iconButton,
+.rowActions button,
+.metricDetailHeader button,
+.simulationIncomeActions button {
+  border-color: rgba(196, 198, 205, 0.68);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--primary);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.iconButton:hover,
+.rowActions button:hover,
+.metricDetailHeader button:hover,
+.simulationIncomeActions button:hover {
+  border-color: var(--primary);
+  background: #ffffff;
+  transform: translateY(-1px);
+}
+
+.headerRefreshButton {
+  min-width: 104px;
+  background: #ffffff;
+}
+
+.controlBar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  top: 64px;
+  z-index: 7;
+  margin: 0 0 14px;
+  padding: 10px;
+  border: 1px solid rgba(196, 198, 205, 0.46);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 16px 42px rgba(4, 22, 39, 0.07);
+}
+
+.controlBar label,
+.controlBar button,
+input,
+select,
+textarea {
+  border-color: rgba(196, 198, 205, 0.68);
+  background: #ffffff;
+}
+
+.controlBar button,
+button[type="submit"],
+.primaryActionButton {
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(4, 22, 39, 0.12);
+}
+
+.controlBar button:hover,
+button[type="submit"]:hover,
+.primaryActionButton:hover {
+  background: var(--primary-container);
+}
+
+.notice,
+.snapshotStatus,
+.snapshotStatus.live {
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(4, 22, 39, 0.06);
+}
+
+.snapshotStatus.live {
+  border-color: rgba(0, 109, 55, 0.24);
+  background: #effaf4;
+  color: var(--positive);
+}
+
+.heroCard {
+  position: relative;
+  overflow: hidden;
+  min-height: 194px;
+  gap: 22px;
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(135deg, #041627 0%, #10273d 58%, #0b1d2d 100%);
+  box-shadow: 0 24px 46px rgba(4, 22, 39, 0.16);
+}
+
+.heroCard::after,
+.insightHero::after {
+  position: absolute;
+  inset: auto 18px 18px auto;
+  width: 132px;
+  height: 132px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  content: "";
+  opacity: 0.42;
+  transform: rotate(10deg);
+}
+
+.heroPrimary,
+.heroLiquidity,
+.insightHeroCopy,
+.insightHeroStats {
+  position: relative;
+  z-index: 1;
+}
+
+.heroPrimary span,
+.heroLiquidity span {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.heroPrimary strong {
+  margin-top: 10px;
+  font-size: 2.45rem;
+  font-weight: 900;
+}
+
+.heroPrimary p {
+  margin-top: 10px;
+  font-weight: 800;
+}
+
+.heroLiquidity {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.liquiditySplitBar {
+  height: 14px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.liquiditySplitBar span {
+  background: #6bfe9c;
+}
+
+.liquiditySplitBar i {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.priorityMetrics,
+.secondaryMetrics,
+.insightKpiGrid,
+.simulationMetricGrid {
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.metric {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(196, 198, 205, 0.52);
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(4, 22, 39, 0.06);
+}
+
+.metric::after {
+  position: absolute;
+  inset: 0;
+  border-top: 3px solid rgba(4, 22, 39, 0.08);
+  content: "";
+  pointer-events: none;
+}
+
+.metric.high {
+  min-height: 132px;
+}
+
+.metric span:first-child {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--primary);
+}
+
+.metric p {
+  color: var(--neutral-600);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+}
+
+.metric strong {
+  color: var(--primary);
+  font-size: 1.14rem;
+  font-weight: 900;
+}
+
+.metric.high strong {
+  font-size: 1.34rem;
+}
+
+.metric.clickable:hover {
+  border-color: rgba(4, 22, 39, 0.28);
+  box-shadow: 0 18px 36px rgba(4, 22, 39, 0.1);
+}
+
+.metric.selected {
+  border-color: rgba(4, 22, 39, 0.44);
+  box-shadow:
+    inset 0 0 0 1px rgba(4, 22, 39, 0.2),
+    0 18px 36px rgba(4, 22, 39, 0.1);
+}
+
+.metric.positive::after {
+  border-top-color: rgba(0, 109, 55, 0.6);
+}
+
+.metric.warning::after {
+  border-top-color: rgba(154, 103, 0, 0.62);
+}
+
+.metric.negative::after {
+  border-top-color: rgba(186, 26, 26, 0.55);
+}
+
+.metric.positive span:first-child,
+.metric.positive strong {
+  color: var(--positive);
+}
+
+.metric.warning span:first-child,
+.metric.warning strong {
+  color: var(--warning);
+}
+
+.metric.negative span:first-child,
+.metric.negative strong {
+  color: var(--negative);
+}
+
+.panel,
+.insightPanel,
+.metricDetailPanel {
+  border-color: rgba(196, 198, 205, 0.52);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 30px rgba(4, 22, 39, 0.06);
+}
+
+.panel {
+  margin-top: 14px;
+  padding: 18px;
+}
+
+.sectionHeader h2,
+.insightPanelTitle h3 {
+  color: var(--primary);
+  font-weight: 900;
+}
+
+.sectionHeader span,
+.emptyText,
+.accountItem span,
+.assetMeta,
+.assetItem span {
+  color: var(--neutral-600);
+}
+
+.segmented {
+  background: var(--surface-subtle);
+}
+
+.segmented button.active {
+  color: var(--primary);
+  box-shadow: 0 5px 14px rgba(4, 22, 39, 0.1);
+}
+
+.textButton,
+.searchField button,
+.tickerField button {
+  background: #effaf4;
+  color: var(--positive);
+}
+
+.assetWorkspace {
+  margin-top: 14px;
+}
+
+.assetToolbar {
+  top: 132px;
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid rgba(196, 198, 205, 0.46);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 12px 30px rgba(4, 22, 39, 0.05);
+}
+
+.assetItem,
+.accountItem,
+.transactionItem,
+.simulationAssumptionRow,
+.simulationIncomeItem,
+.performanceRow,
+.periodCompareRow,
+.riskInsightItem,
+.insightFutureNote,
+.cashFlowSummaryItem,
+.cashFlowInsight {
+  border-color: rgba(196, 198, 205, 0.54);
+  background: #ffffff;
+}
+
+.accountsPage {
+  display: grid;
+  gap: 16px;
+}
+
+.accountsHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+  gap: 18px;
+  align-items: stretch;
+  min-height: 164px;
+  overflow: hidden;
+  border: 1px solid rgba(196, 198, 205, 0.52);
+  border-radius: 8px;
+  padding: 22px;
+  background:
+    linear-gradient(135deg, #ffffff 0%, #f3f8f6 56%, #eef6ff 100%);
+  box-shadow: 0 18px 38px rgba(4, 22, 39, 0.08);
+}
+
+.accountsHeroCopy {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountsHeroCopy span,
+.accountsHeroCopy p,
+.accountsHeroStats small,
+.fieldGroup span,
+.accountCardStats small,
+.accountRestrictionStatus span,
+.accountRestrictionStatus small {
+  color: var(--neutral-600);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.accountsHeroCopy h2 {
+  margin: 0;
+  color: var(--primary);
+  font-size: 2rem;
+  line-height: 1.08;
+  overflow-wrap: anywhere;
+}
+
+.accountsHeroCopy p {
+  max-width: 42rem;
+  line-height: 1.45;
+}
+
+.accountsHeroStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-content: stretch;
+}
+
+.accountsHeroStats span {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid rgba(196, 198, 205, 0.48);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.accountsHeroStats b {
+  min-width: 0;
+  color: var(--primary);
+  font-size: 1.24rem;
+  overflow-wrap: anywhere;
+}
+
+.accountsWorkspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.38fr) minmax(0, 0.62fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.accountFormPanel {
+  position: sticky;
+  top: 132px;
+  margin-top: 0;
+}
+
+.accountForm,
+.accountFormGrid,
+.fieldGroup,
+.accountRestrictionEditor,
+.accountRestrictionFields,
+.accountListPanel,
+.accountCardGrid {
+  display: grid;
+  min-width: 0;
+}
+
+.accountForm {
+  gap: 12px;
+}
+
+.accountFormGrid,
+.accountRestrictionFields {
+  gap: 10px;
+}
+
+.fieldGroup {
+  gap: 6px;
+}
+
+.fieldGroup input {
+  min-width: 0;
+}
+
+.accountIconField {
+  gap: 8px;
+}
+
+.accountIconSelector {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.accountIconChoice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 46px;
+  border: 1px solid rgba(196, 198, 205, 0.58);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #ffffff;
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: left;
+  cursor: pointer;
+}
+
+.accountIconChoice:hover {
+  border-color: var(--account-icon-border);
+  background: var(--account-icon-bg);
+}
+
+.accountIconChoice.selected {
+  border-color: var(--account-icon-border);
+  background: linear-gradient(180deg, #ffffff 0%, var(--account-icon-bg) 100%);
+  box-shadow: inset 0 0 0 1px var(--account-icon-border);
+}
+
+.accountIconChoice > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountIconChoice input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.accountIconChoice input:focus-visible + .accountIconPreview {
+  outline: 2px solid var(--account-icon-color);
+  outline-offset: 2px;
+}
+
+.accountRestrictionEditor {
+  gap: 10px;
+  border-top: 1px solid rgba(196, 198, 205, 0.52);
+  padding-top: 12px;
+}
+
+.accountRestrictionToggle {
+  justify-content: space-between;
+  background: var(--surface-subtle);
+}
+
+.accountRestrictionFields {
+  grid-template-columns: 1fr;
+}
+
+.accountForm button[type="submit"] {
+  width: 100%;
+  justify-content: center;
+}
+
+.accountListPanel {
+  gap: 12px;
+}
+
+.accountCardGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.accountCard {
+  display: grid;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 14px;
+  min-width: 0;
+  min-height: 178px;
+  border-left: 5px solid var(--positive);
+  padding: 16px;
+  box-shadow: 0 12px 30px rgba(4, 22, 39, 0.06);
+}
+
+.accountCard.restricted {
+  border-left-color: var(--warning);
+}
+
+.accountCardTop,
+.accountIdentity,
+.accountCardStats {
+  display: flex;
+  min-width: 0;
+}
+
+.accountCardTop {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.accountIdentity {
+  align-items: center;
+  gap: 10px;
+}
+
+.accountIdentity > div {
+  min-width: 0;
+}
+
+.accountIcon {
+  --account-icon-size: 44px;
+  --account-icon-glyph: 24px;
+  display: grid;
+  width: var(--account-icon-size);
+  height: var(--account-icon-size);
+  flex: 0 0 var(--account-icon-size);
+  place-items: center;
+  border: 1px solid var(--account-icon-border);
+  border-radius: 10px;
+  background: var(--account-icon-bg);
+  color: var(--account-icon-color);
+}
+
+.accountCard.restricted .accountIcon {
+  box-shadow: 0 0 0 3px rgba(183, 119, 35, 0.12);
+}
+
+.accountIconPreview {
+  --account-icon-size: 32px;
+  --account-icon-glyph: 18px;
+  display: grid;
+  width: var(--account-icon-size);
+  height: var(--account-icon-size);
+  flex: 0 0 var(--account-icon-size);
+  place-items: center;
+  border: 1px solid var(--account-icon-border);
+  border-radius: 8px;
+  background: var(--account-icon-bg);
+  color: var(--account-icon-color);
+}
+
+.accountIcon svg,
+.accountIconPreview svg {
+  display: block;
+  width: var(--account-icon-glyph);
+  height: var(--account-icon-glyph);
+  stroke-width: 2.1;
+}
+
+.accountIconTheme-teal {
+  --account-icon-bg: #e8f7f2;
+  --account-icon-border: rgba(40, 113, 91, 0.28);
+  --account-icon-color: #28715b;
+}
+
+.accountIconTheme-blue {
+  --account-icon-bg: #e8f2fb;
+  --account-icon-border: rgba(23, 69, 107, 0.28);
+  --account-icon-color: #17456b;
+}
+
+.accountIconTheme-amber {
+  --account-icon-bg: #fff4df;
+  --account-icon-border: rgba(184, 107, 60, 0.28);
+  --account-icon-color: #9b5a29;
+}
+
+.accountIconTheme-green {
+  --account-icon-bg: #eef9e8;
+  --account-icon-border: rgba(58, 125, 76, 0.28);
+  --account-icon-color: #3a7d4c;
+}
+
+.accountIconTheme-rose {
+  --account-icon-bg: #fff0f2;
+  --account-icon-border: rgba(154, 77, 87, 0.28);
+  --account-icon-color: #9a4d57;
+}
+
+.accountIconTheme-violet {
+  --account-icon-bg: #f1efff;
+  --account-icon-border: rgba(109, 91, 208, 0.28);
+  --account-icon-color: #5b4bbd;
+}
+
+.accountIconTheme-cyan {
+  --account-icon-bg: #e8f7fb;
+  --account-icon-border: rgba(48, 117, 138, 0.28);
+  --account-icon-color: #30758a;
+}
+
+.accountIconTheme-slate {
+  --account-icon-bg: #edf2f5;
+  --account-icon-border: rgba(93, 113, 128, 0.3);
+  --account-icon-color: #4f6473;
+}
+
+.accountIconTheme-stone {
+  --account-icon-bg: #f4f1ec;
+  --account-icon-border: rgba(118, 100, 78, 0.28);
+  --account-icon-color: #6b5843;
+}
+
+.accountIconTheme-emerald {
+  --account-icon-bg: #e8f8ed;
+  --account-icon-border: rgba(37, 132, 83, 0.28);
+  --account-icon-color: #258453;
+}
+
+.accountIconTheme-orange {
+  --account-icon-bg: #fff2e6;
+  --account-icon-border: rgba(183, 119, 35, 0.3);
+  --account-icon-color: #a56518;
+}
+
+.accountCard strong,
+.accountCard span,
+.accountCard b,
+.accountCard small {
+  min-width: 0;
+}
+
+.accountIdentity strong {
+  color: var(--primary);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.accountIdentity > div > span {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountCardActions {
+  flex: 0 0 auto;
+}
+
+.accountCardStats {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.65fr);
+  gap: 8px;
+}
+
+.accountCardStats span {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(196, 198, 205, 0.42);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-subtle);
+}
+
+.accountCardStats b {
+  color: var(--primary);
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+.accountRestrictionStatus {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(154, 103, 0, 0.2);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--warning-soft);
+}
+
+.accountRestrictionStatus strong {
+  color: #74500a;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.chartPanel,
+.simulationChartPanel {
+  overflow: hidden;
+}
+
+.chartWrap,
+.simulationChartWrap {
+  min-height: 250px;
+  border: 1px solid rgba(196, 198, 205, 0.36);
+  padding: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f3f8f6 100%);
+}
+
+.insightDashboard {
+  gap: 14px;
+}
+
+.insightHero {
+  position: relative;
+  overflow: hidden;
+  min-height: 196px;
+  gap: 20px;
+  border-color: rgba(255, 255, 255, 0.12);
+  padding: 24px;
+  background:
+    linear-gradient(135deg, #041627 0%, #10273d 58%, #002c47 100%);
+  box-shadow: 0 24px 46px rgba(4, 22, 39, 0.16);
+}
+
+.insightHeroCopy {
+  gap: 10px;
+}
+
+.insightHeroCopy span,
+.insightHeroCopy p,
+.insightHeroStats span {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.insightHeroCopy h2 {
+  font-size: 2.32rem;
+  font-weight: 900;
+}
+
+.insightHeroStats {
+  gap: 10px;
+}
+
+.insightHeroStats div {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.insightGrid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 14px;
+}
+
+.insightPanel {
+  gap: 14px;
+  padding: 18px;
+}
+
+.insightPanelTitle > span {
+  background: #effaf4;
+  color: var(--positive);
+}
+
+.dashboardStackBar {
+  height: 20px;
+  background: var(--surface-subtle);
+}
+
+.dashboardRankBar {
+  height: 7px;
+}
+
+.cashFlowMonthRow {
+  border-color: rgba(196, 198, 205, 0.54);
+  background: #ffffff;
+}
+
+.simulationPage {
+  gap: 14px;
+}
+
+.simulationHero {
+  position: relative;
+  overflow: hidden;
+  min-height: 186px;
+  gap: 20px;
+  padding: 24px;
+  border-color: rgba(196, 198, 205, 0.52);
+  background:
+    linear-gradient(135deg, #ffffff 0%, #f3f8f6 54%, #eef6ff 100%);
+  box-shadow: 0 18px 38px rgba(4, 22, 39, 0.08);
+}
+
+.simulationHero::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: var(--positive);
+  content: "";
+}
+
+.simulationHero span,
+.simulationHero p,
+.simulationLiquidity small {
+  color: var(--neutral-600);
+}
+
+.simulationHero strong {
+  color: var(--primary);
+  font-size: 2.18rem;
+  font-weight: 900;
+}
+
+.simulationLiquidity {
+  border: 1px solid rgba(196, 198, 205, 0.44);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.simulationLiquidity .liquiditySplitBar {
+  background: #e1e3e4;
+}
+
+.simulationLiquidity .liquiditySplitBar i {
+  background: #c4c6cd;
+}
+
+.simulationPointDetail,
+.simulationAssumptionSummary span,
+.simulationAssumptionGroup,
+.simulationTableRow {
+  border-color: rgba(196, 198, 205, 0.54);
+  background: #ffffff;
+}
+
+.simulationDetailMetrics span,
+.simulationDetailSection {
+  border: 1px solid rgba(196, 198, 205, 0.42);
+  background: var(--surface-subtle);
+}
+
+.simulationIncomeToolbar button {
+  border-color: rgba(196, 198, 205, 0.68);
+  background: #ffffff;
+}
+
+.simulationIncomeToolbar button.active {
+  border-color: rgba(0, 109, 55, 0.32);
+  background: #effaf4;
+  color: var(--positive);
+}
+
+.bottomNav {
+  min-height: 78px;
+  border-top-color: rgba(196, 198, 205, 0.54);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 -10px 34px rgba(4, 22, 39, 0.08);
+}
+
+.bottomNav button {
+  position: relative;
+  min-height: 72px;
+  color: var(--neutral-600);
+  transition:
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.bottomNav button:hover {
+  color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.bottomNav button.active {
+  color: var(--primary);
+}
+
+.bottomNav button.active::before {
+  position: absolute;
+  top: 0;
+  width: 34px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--primary);
+  content: "";
+}
+
+@media (max-width: 760px) {
+  .appShell {
+    padding: 14px 12px 104px;
+  }
+
+  .appHeader {
+    margin: -14px -12px 12px;
+    padding: 9px 12px;
+  }
+
+  .appHeaderActions {
+    gap: 7px;
+  }
+
+  .liveBadge {
+    display: none;
+  }
+
+  .headerRefreshButton {
+    min-width: 88px;
+  }
+
+  .controlBar {
+    grid-template-columns: 1fr 1fr;
+    top: 62px;
+    padding: 8px;
+  }
+
+  .controlBar label {
+    grid-column: 1 / -1;
+  }
+
+  .heroCard,
+  .insightHero,
+  .simulationHero {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .heroCard::after,
+  .insightHero::after {
+    display: none;
+  }
+
+  .heroPrimary strong,
+  .insightHeroCopy h2,
+  .simulationHero strong {
+    font-size: 1.65rem;
+  }
+
+  .panel,
+  .insightPanel {
+    padding: 14px;
+  }
+
+  .accountsHero,
+  .accountsWorkspace,
+  .accountCardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .accountsHero {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .accountsHeroCopy h2 {
+    font-size: 1.55rem;
+  }
+
+  .accountsHeroStats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .accountsHeroStats span,
+  .accountCard,
+  .accountCardStats span,
+  .accountRestrictionStatus {
+    padding: 10px;
+  }
+
+  .accountFormPanel {
+    position: static;
+  }
+
+  .accountCard {
+    min-height: 0;
+  }
+
+  .accountCardStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .assetToolbar {
+    top: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .chartWrap,
+  .simulationChartWrap {
+    min-height: 214px;
+    padding: 6px;
+  }
+
+  .bottomNav {
+    min-height: 74px;
+  }
+}
+
 @media (max-width: 560px) {
   .appShell {
     padding-inline: 12px;

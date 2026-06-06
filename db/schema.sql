@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS asset_accounts (
   id text PRIMARY KEY,
   name text NOT NULL,
   institution text,
+  icon_key text NOT NULL DEFAULT 'bank',
   liquidity_restricted boolean NOT NULL DEFAULT false,
   liquidity_unlock_date date,
   liquidity_restriction_reason text,
@@ -9,6 +10,7 @@ CREATE TABLE IF NOT EXISTS asset_accounts (
 );
 
 ALTER TABLE asset_accounts
+  ADD COLUMN IF NOT EXISTS icon_key text NOT NULL DEFAULT 'bank',
   ADD COLUMN IF NOT EXISTS liquidity_restricted boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS liquidity_unlock_date date,
   ADD COLUMN IF NOT EXISTS liquidity_restriction_reason text;

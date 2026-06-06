@@ -4,18 +4,27 @@ import {
   AlertTriangle,
   Banknote,
   BarChart3,
+  BriefcaseBusiness,
+  Building2,
   CalendarDays,
+  ChartNoAxesCombined,
   CircleDollarSign,
+  CreditCard,
+  Globe2,
   Landmark,
   Layers,
   LineChart,
+  LockKeyhole,
   Pencil,
+  PiggyBank,
   Plus,
   RefreshCw,
   Search,
   Target,
   Trash2,
   TrendingUp,
+  Vault,
+  Wallet,
   WalletCards,
   X
 } from "lucide-react";
@@ -122,9 +131,26 @@ const editableTransactionLabels: Record<TransactionMode, string> = {
 
 const today = localDateString();
 
+const accountIconOptions = [
+  { key: "bank", label: "은행", Icon: Building2, tone: "teal" },
+  { key: "brokerage", label: "증권", Icon: Landmark, tone: "blue" },
+  { key: "wallet", label: "지갑", Icon: Wallet, tone: "amber" },
+  { key: "cash", label: "현금", Icon: CircleDollarSign, tone: "green" },
+  { key: "savings", label: "저축", Icon: PiggyBank, tone: "rose" },
+  { key: "pension", label: "연금", Icon: BriefcaseBusiness, tone: "violet" },
+  { key: "global", label: "해외", Icon: Globe2, tone: "cyan" },
+  { key: "card", label: "카드", Icon: CreditCard, tone: "slate" },
+  { key: "vault", label: "금고", Icon: Vault, tone: "stone" },
+  { key: "growth", label: "성장", Icon: ChartNoAxesCombined, tone: "emerald" },
+  { key: "locked", label: "제한", Icon: LockKeyhole, tone: "orange" }
+] as const;
+
+const defaultAccountIconKey = "bank";
+
 type Tab = "overview" | "insights" | "assets" | "simulation" | "accounts";
 type TransactionMode = "buy" | "sell" | "dividend";
 type SimulationRange = "6m" | "1y" | "3y" | "custom";
+type AccountIconKey = (typeof accountIconOptions)[number]["key"];
 
 type SimulationIncomeForm = {
   accountId: string;
@@ -141,6 +167,7 @@ type SimulationIncomeForm = {
 type AccountForm = {
   name: string;
   institution: string;
+  iconKey: AccountIconKey;
   liquidityRestricted: boolean;
   liquidityUnlockDate: string;
   liquidityRestrictionReason: string;
@@ -338,6 +365,7 @@ const emptyOneTimeIncomeForm = (): SimulationIncomeForm => ({
 const emptyAccountForm = (): AccountForm => ({
   name: "",
   institution: "",
+  iconKey: defaultAccountIconKey,
   liquidityRestricted: false,
   liquidityUnlockDate: "",
   liquidityRestrictionReason: ""
@@ -689,9 +717,21 @@ export function App() {
     () => filterAssetRows(displayedAssets, assetSearch, assetAccountFilter, assetTypeFilter),
     [displayedAssets, assetSearch, assetAccountFilter, assetTypeFilter]
   );
+  const accountAssetCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    (summary?.assets ?? []).forEach((asset) => counts.set(asset.accountId, (counts.get(asset.accountId) ?? 0) + 1));
+    return counts;
+  }, [summary]);
+  const accountValueById = useMemo(() => {
+    const values = new Map<string, number>();
+    (summary?.assets ?? []).forEach((asset) => values.set(asset.accountId, (values.get(asset.accountId) ?? 0) + asset.valueKrw));
+    return values;
+  }, [summary]);
   const problemAssets = useMemo(() => displayedAssets.filter((asset) => asset.lastPriceError), [displayedAssets]);
   const liquidityRatio = summary?.liquidRatio ?? 0;
   const lockedRatio = Math.max(0, 100 - liquidityRatio);
+  const restrictedAccountCount = accounts.filter((account) => account.liquidityRestricted).length;
+  const linkedAccountCount = accounts.filter((account) => (accountAssetCounts.get(account.id) ?? 0) > 0).length;
   const simulationResult = useMemo(
     () => buildSimulation(summary?.assets ?? [], simulationIncomes, accounts, today, simulationEndDate),
     [summary, simulationIncomes, accounts, simulationEndDate]
@@ -817,6 +857,9 @@ export function App() {
       await deleteAccount(account.id);
       setFeedback(`계좌 "${account.name}" 삭제 완료`);
       setEditingAccountId(null);
+      if (editingAccountId === account.id) {
+        setAccountForm(emptyAccountForm());
+      }
       await load(undefined, { refreshLatest: true, allowCachedData: false });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "계좌를 삭제하지 못했습니다.");
@@ -1019,6 +1062,7 @@ export function App() {
     setAccountForm({
       name: account.name,
       institution: account.institution ?? "",
+      iconKey: accountIconOptionFor(account.iconKey).key,
       liquidityRestricted: account.liquidityRestricted,
       liquidityUnlockDate: account.liquidityUnlockDate ?? "",
       liquidityRestrictionReason: account.liquidityRestrictionReason ?? ""
@@ -1189,21 +1233,29 @@ export function App() {
   return (
     <main className="appShell">
       <header className="appHeader">
-        <div>
-          <p className="eyebrow">Young's Plan</p>
-          <h1>자산 대시보드</h1>
+        <div className="appHeaderBrand">
+          <span className="brandMark" aria-hidden="true">
+            <Activity size={18} />
+          </span>
+          <div>
+            <p className="eyebrow">Young's Plan</p>
+            <h1>자산 대시보드</h1>
+          </div>
         </div>
-        <button
-          className="iconButton headerRefreshButton"
-          type="button"
-          onClick={() => void load(undefined, { refreshLatest: true, allowCachedData: false, showFeedback: true })}
-          disabled={isRefreshingDashboard}
-          aria-label="데이터 새로고침"
-          title="데이터 새로고침"
-        >
-          <RefreshCw size={20} />
-          <span>{isRefreshingDashboard ? "갱신 중" : "데이터"}</span>
-        </button>
+        <div className="appHeaderActions">
+          <span className="liveBadge">LIVE</span>
+          <button
+            className="iconButton headerRefreshButton"
+            type="button"
+            onClick={() => void load(undefined, { refreshLatest: true, allowCachedData: false, showFeedback: true })}
+            disabled={isRefreshingDashboard}
+            aria-label="데이터 새로고침"
+            title="데이터 새로고침"
+          >
+            <RefreshCw size={20} />
+            <span>{isRefreshingDashboard ? "갱신 중" : "데이터"}</span>
+          </button>
+        </div>
       </header>
 
       <section className="controlBar">
@@ -1558,110 +1610,197 @@ export function App() {
       )}
 
       {tab === "accounts" && (
-        <>
-          <section className="panel">
-            <div className="sectionHeader">
-              <div>
-                <h2>{editingAccountId ? "계좌 수정" : "계좌 등록"}</h2>
-                <span>은행, 증권사, 부동산 등 자산을 묶을 단위입니다.</span>
-              </div>
-              {editingAccountId && (
-                <button className="textButton" type="button" onClick={resetAccountForm}>
-                  신규 입력
-                </button>
-              )}
+        <section className="accountsPage">
+          <section className="accountsHero">
+            <div className="accountsHeroCopy">
+              <span>계좌 관리</span>
+              <h2>연결 계좌 {accounts.length.toLocaleString("ko-KR")}개</h2>
+              <p>은행, 증권사, 부동산 등 자산을 묶는 단위와 현금화 제한 상태를 함께 관리합니다.</p>
             </div>
-            <form className="compactForm" noValidate onSubmit={(event) => void submitAccount(event)}>
-              <input
-                name="accountName"
-                placeholder="계좌명"
-                value={accountForm.name}
-                onChange={(event) => setAccountForm({ ...accountForm, name: event.target.value })}
-              />
-              <input
-                name="institution"
-                placeholder="기관"
-                value={accountForm.institution}
-                onChange={(event) => setAccountForm({ ...accountForm, institution: event.target.value })}
-              />
-              <label className="toggleRow accountRestrictionToggle">
-                <input
-                  name="accountLiquidityRestricted"
-                  type="checkbox"
-                  checked={accountForm.liquidityRestricted}
-                  onChange={(event) =>
-                    setAccountForm({
-                      ...accountForm,
-                      liquidityRestricted: event.target.checked,
-                      liquidityUnlockDate: event.target.checked ? accountForm.liquidityUnlockDate : ""
-                    })
-                  }
-                />
-                <span>현금화 제한</span>
-              </label>
-              {accountForm.liquidityRestricted && (
-                <>
-                  <label className="dateInput">
-                    해지 가능일
-                    <input
-                      type="date"
-                      value={accountForm.liquidityUnlockDate}
-                      onChange={(event) => setAccountForm({ ...accountForm, liquidityUnlockDate: event.target.value })}
-                    />
-                  </label>
-                  <input
-                    name="liquidityRestrictionReason"
-                    placeholder="제한 사유 예: ISA, 연금"
-                    value={accountForm.liquidityRestrictionReason}
-                    onChange={(event) => setAccountForm({ ...accountForm, liquidityRestrictionReason: event.target.value })}
-                  />
-                </>
-              )}
-              <button type="submit" disabled={isSavingAccount}>
-                <Plus size={18} />
-                {isSavingAccount ? "저장 중" : editingAccountId ? "수정" : "추가"}
-              </button>
-            </form>
+            <div className="accountsHeroStats" aria-label="계좌 요약">
+              <span>
+                <small>전체 계좌</small>
+                <b>{accounts.length.toLocaleString("ko-KR")}개</b>
+              </span>
+              <span>
+                <small>자산 연결</small>
+                <b>{linkedAccountCount.toLocaleString("ko-KR")}개</b>
+              </span>
+              <span>
+                <small>현금화 제한</small>
+                <b>{restrictedAccountCount.toLocaleString("ko-KR")}개</b>
+              </span>
+            </div>
           </section>
 
-          <section className="panel">
-            <div className="sectionHeader">
-              <div>
-                <h2>계좌 목록</h2>
-                <span>{accounts.length}개</span>
+          <section className="accountsWorkspace">
+            <section className="panel accountFormPanel">
+              <div className="sectionHeader">
+                <div>
+                  <h2>{editingAccountId ? "계좌 수정" : "계좌 등록"}</h2>
+                  <span>계좌명, 기관, 현금화 제한 조건을 저장합니다.</span>
+                </div>
+                {editingAccountId && (
+                  <button className="textButton" type="button" onClick={resetAccountForm}>
+                    신규 입력
+                  </button>
+                )}
               </div>
-            </div>
-            <div className="accountList">
-              {accounts.length === 0 ? (
-                <span className="emptyText">등록된 계좌 없음</span>
-              ) : (
-                accounts.map((account) => (
-                  <article className="accountItem" key={account.id}>
-                    <div>
-                      <strong>{account.name}</strong>
-                      <span>{account.institution || "기관 미입력"}</span>
-                      {account.liquidityRestricted && (
-                        <span className="accountRestrictionBadge">
-                          현금화 제한
-                          {account.liquidityUnlockDate ? ` · ${account.liquidityUnlockDate} 이후` : ""}
-                          {account.liquidityRestrictionReason ? ` · ${account.liquidityRestrictionReason}` : ""}
-                        </span>
-                      )}
+              <form className="accountForm" noValidate onSubmit={(event) => void submitAccount(event)}>
+                <div className="accountFormGrid">
+                  <label className="fieldGroup">
+                    <span>계좌명</span>
+                    <input
+                      name="accountName"
+                      placeholder="계좌명"
+                      value={accountForm.name}
+                      onChange={(event) => setAccountForm({ ...accountForm, name: event.target.value })}
+                    />
+                  </label>
+                  <label className="fieldGroup">
+                    <span>기관</span>
+                    <input
+                      name="institution"
+                      placeholder="기관"
+                      value={accountForm.institution}
+                      onChange={(event) => setAccountForm({ ...accountForm, institution: event.target.value })}
+                    />
+                  </label>
+                </div>
+                <div className="fieldGroup accountIconField">
+                  <span>계좌 아이콘</span>
+                  <div className="accountIconSelector" role="radiogroup" aria-label="계좌 아이콘">
+                    {accountIconOptions.map((option) => {
+                      const AccountIcon = option.Icon;
+                      const isSelected = accountForm.iconKey === option.key;
+
+                      return (
+                        <label
+                          className={`accountIconChoice accountIconTheme-${option.tone}${isSelected ? " selected" : ""}`}
+                          key={option.key}
+                        >
+                          <input
+                            type="radio"
+                            name="accountIconKey"
+                            value={option.key}
+                            checked={isSelected}
+                            onChange={() => setAccountForm({ ...accountForm, iconKey: option.key })}
+                          />
+                          <span className="accountIconPreview" aria-hidden="true">
+                            <AccountIcon />
+                          </span>
+                          <span>{option.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="accountRestrictionEditor">
+                  <label className="toggleRow accountRestrictionToggle">
+                    <input
+                      name="accountLiquidityRestricted"
+                      type="checkbox"
+                      checked={accountForm.liquidityRestricted}
+                      onChange={(event) =>
+                        setAccountForm({
+                          ...accountForm,
+                          liquidityRestricted: event.target.checked,
+                          liquidityUnlockDate: event.target.checked ? accountForm.liquidityUnlockDate : ""
+                        })
+                      }
+                    />
+                    <span>현금화 제한</span>
+                  </label>
+                  {accountForm.liquidityRestricted && (
+                    <div className="accountRestrictionFields">
+                      <label className="dateInput">
+                        해지 가능일
+                        <input
+                          name="accountLiquidityUnlockDate"
+                          type="date"
+                          value={accountForm.liquidityUnlockDate}
+                          onChange={(event) => setAccountForm({ ...accountForm, liquidityUnlockDate: event.target.value })}
+                        />
+                      </label>
+                      <input
+                        name="liquidityRestrictionReason"
+                        placeholder="제한 사유 예: ISA, 연금"
+                        value={accountForm.liquidityRestrictionReason}
+                        onChange={(event) => setAccountForm({ ...accountForm, liquidityRestrictionReason: event.target.value })}
+                      />
                     </div>
-                    <div className="rowActions">
-                      <button type="button" onClick={() => startAccountEdit(account)} aria-label={`${account.name} 수정`}>
-                        <Pencil size={16} />
-                      </button>
-                      <button type="button" onClick={() => void removeAccount(account)} aria-label={`${account.name} 삭제`}>
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </article>
-                ))
-              )}
-            </div>
+                  )}
+                </div>
+                <button type="submit" disabled={isSavingAccount}>
+                  <Plus size={18} />
+                  {isSavingAccount ? "저장 중" : editingAccountId ? "수정" : "추가"}
+                </button>
+              </form>
+            </section>
+
+            <section className="accountListPanel">
+              <div className="sectionHeader">
+                <div>
+                  <h2>계좌 목록</h2>
+                  <span>{accounts.length.toLocaleString("ko-KR")}개 계좌 · 제한 {restrictedAccountCount.toLocaleString("ko-KR")}개</span>
+                </div>
+              </div>
+              <div className="accountList accountCardGrid">
+                {accounts.length === 0 ? (
+                  <span className="emptyText">등록된 계좌 없음</span>
+                ) : (
+                  accounts.map((account) => {
+                    const accountAssetCount = accountAssetCounts.get(account.id) ?? 0;
+                    const accountValueKrw = accountValueById.get(account.id) ?? 0;
+                    const iconOption = accountIconOptionFor(account.iconKey);
+                    const AccountIcon = iconOption.Icon;
+
+                    return (
+                      <article className={account.liquidityRestricted ? "accountItem accountCard restricted" : "accountItem accountCard"} key={account.id}>
+                        <div className="accountCardTop">
+                          <div className="accountIdentity">
+                            <span className={`accountIcon accountIconTheme-${iconOption.tone}`} aria-hidden="true">
+                              <AccountIcon />
+                            </span>
+                            <div>
+                              <strong>{account.name}</strong>
+                              <span>{account.institution || "기관 미입력"}</span>
+                            </div>
+                          </div>
+                          <div className="rowActions accountCardActions">
+                            <button type="button" onClick={() => startAccountEdit(account)} aria-label={`${account.name} 수정`}>
+                              <Pencil size={16} />
+                            </button>
+                            <button type="button" onClick={() => void removeAccount(account)} aria-label={`${account.name} 삭제`}>
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="accountCardStats">
+                          <span>
+                            <small>평가액</small>
+                            <b>{formatKrw(accountValueKrw)}</b>
+                          </span>
+                          <span>
+                            <small>연결 자산</small>
+                            <b>{accountAssetCount.toLocaleString("ko-KR")}개</b>
+                          </span>
+                        </div>
+                        {account.liquidityRestricted && (
+                          <div className="accountRestrictionStatus">
+                            <span>현금화 제한</span>
+                            <strong>{account.liquidityUnlockDate ? `${account.liquidityUnlockDate} 이후` : "해지일 미입력"}</strong>
+                            {account.liquidityRestrictionReason && <small>{account.liquidityRestrictionReason}</small>}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+            </section>
           </section>
-        </>
+        </section>
       )}
 
       <nav className="bottomNav" aria-label="주요 메뉴">
@@ -2443,7 +2582,7 @@ function SimulationView({
             <Segmented options={simulationRangeLabels} value={range} onChange={onRangeChange} />
             <label className="simulationEndDate">
               종료일
-              <input type="date" value={endDate} min={today} onChange={(event) => onEndDateChange(event.target.value)} />
+              <input name="simulationEndDate" type="date" value={endDate} min={today} onChange={(event) => onEndDateChange(event.target.value)} />
             </label>
           </div>
         </div>
@@ -5874,10 +6013,15 @@ function accountInputFromForm(form: AccountForm) {
   return {
     name: form.name.trim(),
     institution: form.institution.trim() || undefined,
+    iconKey: form.iconKey,
     liquidityRestricted: form.liquidityRestricted,
     liquidityUnlockDate: form.liquidityRestricted ? form.liquidityUnlockDate : null,
     liquidityRestrictionReason: form.liquidityRestricted ? form.liquidityRestrictionReason.trim() || null : null
   };
+}
+
+function accountIconOptionFor(iconKey: string | null | undefined) {
+  return accountIconOptions.find((option) => option.key === iconKey) ?? accountIconOptions[0];
 }
 
 function simulationIncomeInputFromIncome(income: SimulationIncome): SimulationIncomeInput {

@@ -31,6 +31,7 @@ const accountColumns = `
   id,
   name,
   institution,
+  icon_key AS "iconKey",
   liquidity_restricted AS "liquidityRestricted",
   liquidity_unlock_date::text AS "liquidityUnlockDate",
   liquidity_restriction_reason AS "liquidityRestrictionReason",
@@ -133,19 +134,21 @@ export async function listAccounts(): Promise<Account[]> {
 export async function createAccount(input: {
   name: string;
   institution?: string | null;
+  iconKey?: string | null;
   liquidityRestricted?: boolean;
   liquidityUnlockDate?: string | null;
   liquidityRestrictionReason?: string | null;
 }): Promise<Account> {
   const id = randomUUID();
   const result = await pool.query<Account>(
-    `INSERT INTO asset_accounts (id, name, institution, liquidity_restricted, liquidity_unlock_date, liquidity_restriction_reason)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO asset_accounts (id, name, institution, icon_key, liquidity_restricted, liquidity_unlock_date, liquidity_restriction_reason)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING ${accountColumns}`,
     [
       id,
       input.name,
       input.institution ?? null,
+      input.iconKey?.trim() || "bank",
       input.liquidityRestricted ?? false,
       input.liquidityRestricted ? input.liquidityUnlockDate ?? null : null,
       input.liquidityRestricted ? input.liquidityRestrictionReason ?? null : null
@@ -159,6 +162,7 @@ export async function updateAccount(
   input: {
     name: string;
     institution?: string | null;
+    iconKey?: string | null;
     liquidityRestricted?: boolean;
     liquidityUnlockDate?: string | null;
     liquidityRestrictionReason?: string | null;
@@ -168,15 +172,17 @@ export async function updateAccount(
     `UPDATE asset_accounts
      SET name = $2,
          institution = $3,
-         liquidity_restricted = $4,
-         liquidity_unlock_date = $5,
-         liquidity_restriction_reason = $6
+         icon_key = $4,
+         liquidity_restricted = $5,
+         liquidity_unlock_date = $6,
+         liquidity_restriction_reason = $7
      WHERE id = $1
      RETURNING ${accountColumns}`,
     [
       id,
       input.name,
       input.institution ?? null,
+      input.iconKey?.trim() || "bank",
       input.liquidityRestricted ?? false,
       input.liquidityRestricted ? input.liquidityUnlockDate ?? null : null,
       input.liquidityRestricted ? input.liquidityRestrictionReason ?? null : null

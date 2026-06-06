@@ -35,6 +35,7 @@ export async function fetchDashboardSnapshot(date: string): Promise<DashboardDat
 export async function createAccount(input: {
   name: string;
   institution?: string;
+  iconKey?: string | null;
   liquidityRestricted?: boolean;
   liquidityUnlockDate?: string | null;
   liquidityRestrictionReason?: string | null;
@@ -48,6 +49,7 @@ export async function createAccount(input: {
 export async function updateAccount(id: string, input: {
   name: string;
   institution?: string;
+  iconKey?: string | null;
   liquidityRestricted?: boolean;
   liquidityUnlockDate?: string | null;
   liquidityRestrictionReason?: string | null;
